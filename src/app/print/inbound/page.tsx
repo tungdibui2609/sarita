@@ -325,7 +325,13 @@ function InboundContent() {
     try {
       const search = typeof window !== 'undefined' ? window.location.search : '';
       const params = new URLSearchParams(search);
-      if (params.get('preview') === '1') return;
+      // Keep existing preview behavior. Additionally, support a separate `snapshot=1`
+      // flag which is intended for server-side screenshot/render flows. `snapshot=1`
+      // should prevent auto-printing but is not treated as a full "preview mode"
+      // in the UI (so TEXT7 and other preview-only UI remain as before).
+      const isPreview = params.get('preview') === '1';
+      const isSnapshot = params.get('snapshot') === '1';
+      if (isPreview || isSnapshot) return;
     } catch {}
     const t = setTimeout(() => { try { window.print(); setPrinted(true); } catch {} }, 150);
     return () => clearTimeout(t);

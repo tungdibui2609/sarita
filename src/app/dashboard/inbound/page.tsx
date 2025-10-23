@@ -836,7 +836,52 @@ export default function InboundPage() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 3 18 3 18 9"/><rect x="6" y="13" width="12" height="8"/><line x1="6" y1="17" x2="6" y2="17"/></svg>
               In
             </button>
-            {/* Image download removed */}
+            {/* Image download (snapshot) - calls server-side proxy to Browserless */}
+            <button onClick={async () => {
+              if (selected.length !== 1) { alert('Vui lòng chọn đúng 1 phiếu để tải ảnh'); return; }
+              const d = docs.find(x => x.id === selected[0]);
+              if (!d) { alert('Không tìm thấy phiếu đã chọn'); return; }
+              try {
+                setDownloading(true);
+                const slugOrCode = d.slug || d.code;
+                const res = await fetch(`/api/inbound/print-image?slug=${encodeURIComponent(slugOrCode)}`);
+                const ct = res.headers.get('content-type') || '';
+                if (!res.ok) {
+                  // try parse json error
+                  let txt = await res.text();
+                  try { const j = JSON.parse(txt); txt = j?.error || JSON.stringify(j); } catch {}
+                  throw new Error(`Server lỗi: ${res.status} ${txt}`);
+                }
+                if (ct.includes('application/json')) {
+                  const j = await res.json();
+                  throw new Error(j?.error || 'Không nhận được ảnh (json returned)');
+                }
+                if (!ct.includes('image')) {
+                  const txt = await res.text();
+                  throw new Error('Không phải ảnh trả về: ' + txt.slice(0, 200));
+                }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                const today = new Date();
+                const y = today.getFullYear();
+                const m = String(today.getMonth()+1).padStart(2,'0');
+                const dd = String(today.getDate()).padStart(2,'0');
+                a.download = `phieu-${(d.code||slugOrCode)}-${y}${m}${dd}.png`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+              } catch (e: any) {
+                alert(e?.message || 'Tải ảnh thất bại');
+              } finally {
+                setDownloading(false);
+              }
+            }} disabled={selected.length !== 1 || downloading} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 7v10"/></svg>
+              Tải ảnh
+            </button>
             <button onClick={exportSelectedExcel} disabled={selected.length === 0 || downloading} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               {downloading ? 'Đang tải…' : 'Xuất Excel'}
