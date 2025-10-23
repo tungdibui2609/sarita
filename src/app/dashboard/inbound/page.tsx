@@ -936,51 +936,44 @@ export default function InboundPage() {
                     <div className="inline-flex items-center gap-2">
                       <button onClick={async () => {
                         const slugOrCode = d.slug || d.code;
+                        // Immediate download flow (skip modal)
                         setImageModalError(null);
-                        setImageModalLoading(true);
-                        setImageModalOpen(true);
-                        // Kiểm tra cache trước
-                        if (imageBlobCache.current[slugOrCode]) {
-                          try {
-                            const objUrl = URL.createObjectURL(imageBlobCache.current[slugOrCode]);
-                            setImageModalUrl(objUrl);
-                            return;
-                          } finally {
-                            setImageModalLoading(false);
-                          }
-                        }
-
-                        const url = `/api/inbound/print-image?code=${encodeURIComponent(slugOrCode)}&view=inline`;
-                        const controller = new AbortController();
-                        const timeoutMs = 30000; // 30s client-side timeout
-                        const to = setTimeout(() => controller.abort(), timeoutMs);
+                        // reuse downloading indicator to prevent parallel downloads
+                        setDownloading(true);
                         try {
-                          const res = await fetch(url, { signal: controller.signal });
-                          if (!res.ok) {
-                            const txt = await res.text().catch(() => `HTTP ${res.status}`);
-                            throw new Error(txt || `HTTP ${res.status}`);
+                          // Check cache first
+                          let blob = imageBlobCache.current[slugOrCode];
+                          if (!blob) {
+                            const url = `/api/inbound/print-image?code=${encodeURIComponent(slugOrCode)}`;
+                            const controller = new AbortController();
+                            const timeoutMs = 30000;
+                            const to = setTimeout(() => controller.abort(), timeoutMs);
+                            try {
+                              const res = await fetch(url, { signal: controller.signal });
+                              if (!res.ok) {
+                                const txt = await res.text().catch(() => `HTTP ${res.status}`);
+                                throw new Error(txt || `HTTP ${res.status}`);
+                              }
+                              const ct = (res.headers.get('content-type') || '').toLowerCase();
+                              const ab = await res.arrayBuffer();
+                              blob = new Blob([ab], { type: ct || 'image/png' });
+                              if (blob.size === 0) throw new Error('Ảnh rỗng (0 byte)');
+                              imageBlobCache.current[slugOrCode] = blob;
+                            } finally { clearTimeout(to); }
                           }
-                          const contentType = (res.headers.get('content-type') || '').toLowerCase();
-                          // Read as ArrayBuffer to avoid streaming edge cases and construct blob explicitly
-                          const ab = await res.arrayBuffer();
-                          const blob = new Blob([ab], { type: contentType || 'image/png' });
-                          if (blob.size === 0) throw new Error('Ảnh rỗng (0 byte)');
-                          // Cache and show
-                          imageBlobCache.current[slugOrCode] = blob;
-                          const objUrl = URL.createObjectURL(blob);
-                          setImageModalUrl(objUrl);
+                          // Trigger download
+                          const urlObj = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = urlObj;
+                          a.download = `phieu-nhap-${(d.code || d.slug || 'unnamed').toString()}.png`;
+                          a.click();
+                          URL.revokeObjectURL(urlObj);
                         } catch (err: any) {
-                          if (err && err.name === 'AbortError') {
-                            setImageModalError('Quá thời gian chờ tải ảnh (timeout)');
-                          } else {
-                            setImageModalError(err?.message || 'Không tải được ảnh');
-                          }
-                          setImageModalUrl(null);
+                          alert(err?.message || 'Tải ảnh thất bại');
                         } finally {
-                          clearTimeout(to);
-                          setImageModalLoading(false);
+                          setDownloading(false);
                         }
-                      }} className="px-2 py-1 rounded-md text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-900/20">Xem ảnh</button>
+                      }} className="px-2 py-1 rounded-md text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-900/20">Tải ảnh</button>
                       <button onClick={() => onEdit(d)} className="px-2 py-1 rounded-md text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-900/20">Sửa</button>
                       <button onClick={() => onDelete(d)} className="px-2 py-1 rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20">Xóa</button>
                     </div>
