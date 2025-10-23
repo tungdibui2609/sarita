@@ -40,7 +40,9 @@ export async function GET(req: NextRequest) {
     const simplePayload = {
       url: targetUrl,
       gotoOptions: { timeout: timeoutMs, waitUntil: 'networkidle2' },
-      waitForSelector: { selector: '#print-ready', timeout: Math.min(4000, timeoutMs), visible: true },
+      // Wait a bit longer for the readiness marker and capture the full page so QR/footer is included
+      waitForSelector: { selector: '#print-ready', timeout: Math.min(8000, timeoutMs), visible: true },
+      fullPage: true,
       bestAttempt: true,
     } as any;
 
