@@ -217,37 +217,7 @@ export default function InboundPage() {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<number[]>([]);
   const [downloading, setDownloading] = useState(false);
-  const [imageModalOpen, setImageModalOpen] = useState(false);
-  const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
-  const [imageModalLoading, setImageModalLoading] = useState(false);
-  const [imageModalError, setImageModalError] = useState<string | null>(null);
-  const imageModalRef = useRef<HTMLDivElement | null>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [imgScale, setImgScale] = useState(1);
-  const [imgTranslate, setImgTranslate] = useState({ x: 0, y: 0 });
-  // Cache blob ảnh theo mã phiếu
-  const imageBlobCache = useRef<{ [code: string]: Blob }>({});
-
-  // Reset zoom/translate each time modal opens/closes
-  useEffect(() => {
-    if (!imageModalOpen) {
-      setImgScale(1);
-      setImgTranslate({ x: 0, y: 0 });
-      // exit fullscreen if open
-      if (document.fullscreenElement) {
-        try { document.exitFullscreen?.(); } catch {}
-      }
-      setIsFullscreen(false);
-    }
-  }, [imageModalOpen]);
-
-  // Track fullscreen state changes
-  useEffect(() => {
-    function onFs() { setIsFullscreen(Boolean(document.fullscreenElement)); }
-    document.addEventListener('fullscreenchange', onFs);
-    return () => document.removeEventListener('fullscreenchange', onFs);
-  }, []);
+  // image modal and download UI removed per request
   const [productMap, setProductMap] = useState<Map<string, any>>(new Map());
   const [products, setProducts] = useState<SimpleProduct[]>([]);
   const [uoms, setUoms] = useState<string[]>([]);
@@ -791,27 +761,7 @@ export default function InboundPage() {
     }
   }
 
-  async function downloadSelectedImage() {
-    if (selected.length !== 1) { alert("Vui lòng chọn đúng 1 phiếu để tải ảnh"); return; }
-    const d = docs.find(x => x.id === selected[0]);
-    if (!d) { alert("Không tìm thấy phiếu đã chọn"); return; }
-    if (downloading) return;
-    setDownloading(true);
-    try {
-      const slugOrCode = d.slug || d.code;
-      const res = await fetch(`/api/inbound/print-image?code=${encodeURIComponent(slugOrCode)}`);
-      if (!res.ok) throw new Error(await res.text());
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `phieu-nhap-${(d.code || d.slug || "unnamed").toString()}.png`; a.click();
-      URL.revokeObjectURL(url);
-    } catch (e: any) {
-      alert(e?.message || "Tải ảnh thất bại");
-    } finally {
-      setDownloading(false);
-    }
-  }
+  // downloadSelectedImage removed per request (image download features disabled)
 
   async function printSelectedHtml() {
     if (selected.length !== 1) { alert("Vui lòng chọn đúng 1 phiếu để in"); return; }
@@ -886,10 +836,7 @@ export default function InboundPage() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 3 18 3 18 9"/><rect x="6" y="13" width="12" height="8"/><line x1="6" y1="17" x2="6" y2="17"/></svg>
               In
             </button>
-            <button onClick={downloadSelectedImage} disabled={selected.length !== 1 || downloading} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-              Tải ảnh
-            </button>
+            {/* Image download removed */}
             <button onClick={exportSelectedExcel} disabled={selected.length === 0 || downloading} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               {downloading ? 'Đang tải…' : 'Xuất Excel'}
@@ -934,41 +881,6 @@ export default function InboundPage() {
                   <td className="px-4 py-3">{d.description}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
-                      <button onClick={async () => {
-                        const slugOrCode = d.slug || d.code;
-                        setImageModalError(null);
-                        setDownloading(true);
-                        try {
-                          let blob = imageBlobCache.current[slugOrCode];
-                          if (!blob) {
-                            // Build public preview URL and call API with explicit url param
-                            const origin = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
-                            const previewUrl = `${origin}/xhd/${encodeURIComponent(slugOrCode)}?preview=1`;
-                            const apiUrl = `/api/inbound/print-image?url=${encodeURIComponent(previewUrl)}`;
-                            const controller = new AbortController();
-                            const timeoutMs = 30000;
-                            const to = setTimeout(() => controller.abort(), timeoutMs);
-                            try {
-                              const res = await fetch(apiUrl, { signal: controller.signal });
-                              if (!res.ok) {
-                                const txt = await res.text().catch(() => `HTTP ${res.status}`);
-                                throw new Error(txt || `HTTP ${res.status}`);
-                              }
-                              const ct = (res.headers.get('content-type') || '').toLowerCase();
-                              const ab = await res.arrayBuffer();
-                              blob = new Blob([ab], { type: ct || 'image/png' });
-                              if (blob.size === 0) throw new Error('Ảnh rỗng (0 byte)');
-                              imageBlobCache.current[slugOrCode] = blob;
-                            } finally { clearTimeout(to); }
-                          }
-                          const urlObj = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = urlObj; a.download = `phieu-nhap-${(d.code || d.slug || 'unnamed').toString()}.png`; a.click();
-                          URL.revokeObjectURL(urlObj);
-                        } catch (err: any) {
-                          alert(err?.message || 'Tải ảnh preview thất bại');
-                        } finally { setDownloading(false); }
-                      }} className="px-2 py-1 rounded-md text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-900/20">Tải preview</button>
                       <button onClick={() => onEdit(d)} className="px-2 py-1 rounded-md text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-900/20">Sửa</button>
                       <button onClick={() => onDelete(d)} className="px-2 py-1 rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20">Xóa</button>
                     </div>
@@ -1004,113 +916,7 @@ export default function InboundPage() {
         </div>
       )}
       {/* Image preview modal */}
-      {imageModalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/50" onClick={() => {
-            // close and cleanup
-            setImageModalOpen(false);
-            if (imageModalUrl) { URL.revokeObjectURL(imageModalUrl); setImageModalUrl(null); }
-            setImageModalError(null);
-          }} />
-          <div ref={imageModalRef} className="relative z-50 w-[95%] max-w-3xl max-h-[90vh] bg-white dark:bg-zinc-900 rounded-lg overflow-hidden shadow-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-medium">Xem ảnh phiếu</div>
-              <div className="flex items-center gap-2">
-                <button onClick={async () => {
-                  try {
-                    const el = imageModalRef.current;
-                    if (!el) return;
-                    if (!document.fullscreenElement) {
-                      await el.requestFullscreen?.();
-                      setIsFullscreen(true);
-                    } else {
-                      await document.exitFullscreen?.();
-                      setIsFullscreen(false);
-                    }
-                  } catch {}
-                }} className="px-3 py-1 rounded border border-zinc-200 text-sm">{isFullscreen ? 'Thoát F.S' : 'Full screen'}</button>
-                {imageModalUrl && (
-                  <a href={imageModalUrl} download className="px-3 py-1 rounded border border-zinc-200 text-sm">Tải</a>
-                )}
-                <button onClick={() => {
-                  setImageModalOpen(false);
-                  if (imageModalUrl) { URL.revokeObjectURL(imageModalUrl); setImageModalUrl(null); }
-                  setImageModalError(null);
-                }} className="px-3 py-1 rounded border border-zinc-200 text-sm">Đóng</button>
-              </div>
-            </div>
-            <div className="flex items-center justify-center w-full h-[70vh] bg-zinc-50 dark:bg-zinc-800 rounded touch-manipulation">
-              {imageModalLoading ? (
-                <div className="text-sm text-zinc-600">Đang tải ảnh…</div>
-              ) : imageModalError ? (
-                <div className="text-sm text-red-600">{imageModalError}</div>
-              ) : imageModalUrl ? (
-                <img
-                  ref={imageRef}
-                  src={imageModalUrl}
-                  alt="Phiếu"
-                  className="max-w-full max-h-full object-contain touch-none"
-                  style={{ transform: `translate(${imgTranslate.x}px, ${imgTranslate.y}px) scale(${imgScale})` }}
-                  onWheel={(e) => {
-                    // zoom with wheel: ctrl+wheel to zoom
-                    if (!e.ctrlKey) return;
-                    e.preventDefault();
-                    const delta = e.deltaY > 0 ? -0.1 : 0.1;
-                    setImgScale((s) => Math.max(1, Math.min(5, +(s + delta).toFixed(2))));
-                  }}
-                  onMouseDown={(e) => {
-                    if (imgScale <= 1) return;
-                    const startX = e.clientX;
-                    const startY = e.clientY;
-                    const init = { ...imgTranslate };
-                    function onMove(ev: MouseEvent) {
-                      setImgTranslate({ x: init.x + (ev.clientX - startX), y: init.y + (ev.clientY - startY) });
-                    }
-                    function onUp() { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); }
-                    window.addEventListener('mousemove', onMove);
-                    window.addEventListener('mouseup', onUp);
-                  }}
-                  onTouchStart={(e) => {
-                    if (!e.touches) return;
-                    if (e.touches.length === 1) {
-                      // pan start
-                      const t0 = e.touches[0];
-                      const sx = t0.clientX;
-                      const sy = t0.clientY;
-                      const init = { ...imgTranslate };
-                      function onTouchMove(ev: TouchEvent) {
-                        if (!ev.touches || ev.touches.length !== 1) return;
-                        const t = ev.touches[0];
-                        setImgTranslate({ x: init.x + (t.clientX - sx), y: init.y + (t.clientY - sy) });
-                      }
-                      function onTouchEnd() { window.removeEventListener('touchmove', onTouchMove); window.removeEventListener('touchend', onTouchEnd); }
-                      window.addEventListener('touchmove', onTouchMove, { passive: false });
-                      window.addEventListener('touchend', onTouchEnd);
-                    } else if (e.touches.length === 2) {
-                      // pinch start
-                      const a = e.touches[0]; const b = e.touches[1];
-                      const startDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-                      const startScale = imgScale;
-                      function onTouchMove(ev: TouchEvent) {
-                        if (!ev.touches || ev.touches.length !== 2) return;
-                        const a2 = ev.touches[0]; const b2 = ev.touches[1];
-                        const d = Math.hypot(a2.clientX - b2.clientX, a2.clientY - b2.clientY);
-                        const ratio = d / startDist;
-                        setImgScale(Math.max(1, Math.min(5, +(startScale * ratio).toFixed(2))));
-                      }
-                      function onTouchEnd() { window.removeEventListener('touchmove', onTouchMove); window.removeEventListener('touchend', onTouchEnd); }
-                      window.addEventListener('touchmove', onTouchMove, { passive: false });
-                      window.addEventListener('touchend', onTouchEnd);
-                    }
-                  }}
-                />
-              ) : (
-                <div className="text-sm text-zinc-600">Không có ảnh</div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      
       {showModal && editing && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto">
           <div className="absolute inset-0 bg-black/40" onClick={() => { setShowModal(false); setEditing(null); }} />
