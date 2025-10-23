@@ -35,11 +35,16 @@ export async function GET(req: NextRequest) {
     const timeoutMs = Number(process.env.SCREENSHOT_TIMEOUT_MS || 30000);
     const endpoint = `${browserlessBase.replace(/\/+$/, '')}/screenshot?token=${encodeURIComponent(token)}&timeout=${encodeURIComponent(String(timeoutMs))}`;
 
-    // Payload: ask Browserless to nav to the preview URL, wait for #print-ready briefly
+    // Payload: ask Browserless to nav to the preview URL, wait for the QR <img alt="QR"> to appear,
+    // and capture the full page so the QR (often near the bottom) is included.
     const payload = {
       url: targetUrl,
       gotoOptions: { timeout: timeoutMs, waitUntil: 'networkidle2' },
-      waitForSelector: { selector: '#print-ready', timeout: Math.min(4000, timeoutMs), visible: true },
+      // Wait for the QR image element to be present and visible. The print page renders QR as
+      // <img alt="QR" src="data:..."> when ready.
+      waitForSelector: { selector: 'img[alt="QR"]', timeout: Math.min(8000, timeoutMs), visible: true },
+      // Ask Browserless to capture the full page (not only the viewport)
+      fullPage: true,
       bestAttempt: true,
     } as any;
 
