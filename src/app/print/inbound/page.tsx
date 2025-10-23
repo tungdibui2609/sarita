@@ -529,8 +529,8 @@ function InboundContent() {
               </div>
             </div>
           </div>
-                    {/* readiness marker for headless screenshot */}
-                    <div id="print-ready" className="hidden" aria-hidden="true"></div>
+                    {/* readiness marker for headless screenshot: render only after QR is ready so screenshots include QR */}
+                    {qrDataUrl ? <div id="print-ready" className="hidden" aria-hidden="true"></div> : null}
           <div className="flex flex-col justify-between items-start [font-family:'Times_New_Roman',Times,serif] text-[14px] font-normal mt-1">
             <div className="w-full">- Nhập tại kho: {doc.warehouse}</div>
             <div className="w-full mt-1">
