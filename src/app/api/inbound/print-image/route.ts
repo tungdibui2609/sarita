@@ -78,30 +78,52 @@ export async function GET(req: NextRequest) {
         const reqPromise = (async () => {
           const payload = { url: screenshotUrl };
           const timeoutMs = Number(process.env.SCREENSHOT_TIMEOUT_MS || 30000);
-          console.log(`[print-image] Browserless request start url=${printUrl} timeout=${timeoutMs}ms`);
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), timeoutMs);
-          try {
-            const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal } as any);
-            clearTimeout(timer);
-            if (!r.ok) {
-              const txt = await r.text().catch(() => '');
-              console.error('[print-image] Browserless returned non-OK:', r.status, txt);
-              throw new Error(`Browserless(url) ${r.status}: ${txt}`);
+          const maxAttempts = Number(process.env.SCREENSHOT_RETRIES || 3);
+          const minBytes = Number(process.env.SCREENSHOT_MIN_BYTES || 5000);
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            console.log(`[print-image] Browserless attempt ${attempt}/${maxAttempts} url=${screenshotUrl} timeout=${timeoutMs}ms`);
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+              const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal } as any);
+              clearTimeout(timer);
+              if (!r.ok) {
+                const txt = await r.text().catch(() => '');
+                console.error('[print-image] Browserless returned non-OK:', r.status, txt);
+                // if last attempt, throw, else retry
+                if (attempt === maxAttempts) throw new Error(`Browserless(url) ${r.status}: ${txt}`);
+                await new Promise(res => setTimeout(res, attempt * 1000));
+                continue;
+              }
+              const arrBuf = await r.arrayBuffer();
+              const byteLen = (arrBuf && (arrBuf as ArrayBuffer).byteLength) || 0;
+              console.log('[print-image] Browserless returned bytes=', byteLen);
+              if (byteLen < minBytes) {
+                console.warn(`[print-image] Screenshot too small (${byteLen} bytes) - likely blank. Attempt ${attempt}/${maxAttempts}`);
+                if (attempt === maxAttempts) {
+                  try { screenshotCache.set(cacheKeyUrl, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf }); } catch (e) {}
+                  return arrBuf;
+                }
+                // delay before retrying
+                await new Promise(res => setTimeout(res, attempt * 1000 + 500));
+                continue;
+              }
+              try { screenshotCache.set(cacheKeyUrl, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf }); } catch (e) {}
+              return arrBuf;
+            } catch (err: any) {
+              clearTimeout(timer);
+              if (err && err.name === 'AbortError') {
+                console.error('[print-image] Browserless request aborted due to timeout');
+                if (attempt === maxAttempts) throw new Error(`Browserless(url) timeout after ${timeoutMs}ms`);
+                await new Promise(res => setTimeout(res, attempt * 1000));
+                continue;
+              }
+              console.error('[print-image] Browserless request error:', err?.message || err);
+              if (attempt === maxAttempts) throw err;
+              await new Promise(res => setTimeout(res, attempt * 1000));
             }
-            const arrBuf = await r.arrayBuffer();
-            try { screenshotCache.set(cacheKeyUrl, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf }); } catch (e) {}
-            console.log('[print-image] Browserless request finished, bytes=', arrBuf.byteLength);
-            return arrBuf;
-          } catch (err: any) {
-            clearTimeout(timer);
-            if (err.name === 'AbortError') {
-              console.error('[print-image] Browserless request aborted due to timeout');
-              throw new Error(`Browserless(url) timeout after ${timeoutMs}ms`);
-            }
-            console.error('[print-image] Browserless request error:', err?.message || err);
-            throw err;
           }
+          throw new Error('Browserless: all attempts failed');
         })();
 
         inflightScreenshots.set(cacheKey, reqPromise);
