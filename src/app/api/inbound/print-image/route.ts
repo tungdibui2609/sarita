@@ -74,14 +74,31 @@ export async function GET(req: NextRequest) {
         const cacheKeyUrl = `${cacheKey}::url`;
         const reqPromise = (async () => {
           const payload = { url: printUrl };
-          const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-          if (!r.ok) {
-            const txt = await r.text().catch(() => '');
-            throw new Error(`Browserless(url) ${r.status}: ${txt}`);
+          const timeoutMs = Number(process.env.SCREENSHOT_TIMEOUT_MS || 30000);
+          console.log(`[print-image] Browserless request start url=${printUrl} timeout=${timeoutMs}ms`);
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeoutMs);
+          try {
+            const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: controller.signal } as any);
+            clearTimeout(timer);
+            if (!r.ok) {
+              const txt = await r.text().catch(() => '');
+              console.error('[print-image] Browserless returned non-OK:', r.status, txt);
+              throw new Error(`Browserless(url) ${r.status}: ${txt}`);
+            }
+            const arrBuf = await r.arrayBuffer();
+            try { screenshotCache.set(cacheKeyUrl, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf }); } catch (e) {}
+            console.log('[print-image] Browserless request finished, bytes=', arrBuf.byteLength);
+            return arrBuf;
+          } catch (err: any) {
+            clearTimeout(timer);
+            if (err.name === 'AbortError') {
+              console.error('[print-image] Browserless request aborted due to timeout');
+              throw new Error(`Browserless(url) timeout after ${timeoutMs}ms`);
+            }
+            console.error('[print-image] Browserless request error:', err?.message || err);
+            throw err;
           }
-          const arrBuf = await r.arrayBuffer();
-          try { screenshotCache.set(cacheKeyUrl, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf }); } catch (e) {}
-          return arrBuf;
         })();
 
         inflightScreenshots.set(cacheKey, reqPromise);
