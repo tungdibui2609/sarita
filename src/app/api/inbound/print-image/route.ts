@@ -51,13 +51,7 @@ export async function GET(req: NextRequest) {
       try {
         const endpoint = `${browserlessBase.replace(/\/+$/, "")}/screenshot?token=${encodeURIComponent(browserlessToken)}`;
 
-  // Local render options for HTML-post fallback
-  const FORCE_HTML = !!process.env.FORCE_BROWSERLESS_HTML;
-  const LOCAL_RENDER_BASE = (process.env.LOCAL_RENDER_BASE || "http://localhost:3000").replace(/\/$/, "");
-
-  const isDevTunnel = (envBase && /devtunnels\.ms|ngrok\.io|localtunnel\.me/i.test(envBase)) || /devtunnels\.ms|ngrok\.io|localtunnel\.me/i.test((process.env.PRINT_BASE || ''));
-
-  const cacheKey = `${printUrl}::${view}`;
+    const cacheKey = `${printUrl}::${view}`;
         // Return cached image if not expired
         const now = Date.now();
         const cached = screenshotCache.get(cacheKey);
@@ -76,28 +70,9 @@ export async function GET(req: NextRequest) {
           return new Response(inBuf, { status: 200, headers: resHeaders });
         }
 
-        // We'll try HTML-post first when forced or when PRINT_BASE is a devtunnel/ngrok.
-        const tryHtmlPost = FORCE_HTML || isDevTunnel;
-
-        const buildHtmlRequest = async (): Promise<ArrayBuffer> => {
-          // Fetch HTML from a local render host, then POST { html } to Browserless
-          const localUrl = `${LOCAL_RENDER_BASE}/xhd/${encodeURIComponent(code)}`;
-          const htmlFetch = await fetch(localUrl, { method: 'GET' });
-          if (!htmlFetch.ok) throw new Error(`Local fetch failed ${htmlFetch.status}`);
-          const html = await htmlFetch.text();
-          // POST html to Browserless
-          const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ html }) });
-          if (!r.ok) {
-            const txt = await r.text().catch(() => '');
-            throw new Error(`Browserless(html) ${r.status}: ${txt}`);
-          }
-          const arrBuf = await r.arrayBuffer();
-          // store in cache
-          try { screenshotCache.set(cacheKey, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf }); } catch (e) {}
-          return arrBuf;
-        };
-
-        const buildUrlRequest = async (): Promise<ArrayBuffer> => {
+        // Always POST a minimal payload { url } to Browserless
+        const cacheKeyUrl = `${cacheKey}::url`;
+        const reqPromise = (async () => {
           const payload = { url: printUrl };
           const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
           if (!r.ok) {
@@ -105,20 +80,8 @@ export async function GET(req: NextRequest) {
             throw new Error(`Browserless(url) ${r.status}: ${txt}`);
           }
           const arrBuf = await r.arrayBuffer();
-          try { screenshotCache.set(cacheKey, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf }); } catch (e) {}
+          try { screenshotCache.set(cacheKeyUrl, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf }); } catch (e) {}
           return arrBuf;
-        };
-
-        const reqPromise = (async () => {
-          if (tryHtmlPost) {
-            try {
-              return await buildHtmlRequest();
-            } catch (htmlErr) {
-              console.warn('[print-image] HTML POST to Browserless failed, falling back to URL POST:', (htmlErr as any)?.message || String(htmlErr));
-            }
-          }
-          // fallback to URL request
-          return await buildUrlRequest();
         })();
 
         inflightScreenshots.set(cacheKey, reqPromise);
