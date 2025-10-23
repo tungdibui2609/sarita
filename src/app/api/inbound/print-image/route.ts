@@ -125,6 +125,55 @@ export async function GET(req: NextRequest) {
               await new Promise(res => setTimeout(res, attempt * 1000));
             }
           }
+          // If we reach here, all { url } attempts failed or returned too-small images.
+          // As a robust fallback, try fetching the target page HTML server-side and POST { html, url }
+          // to Browserless in case the service cannot reach the public URL directly (dev tunnels, auth, etc.).
+          try {
+            console.warn('[print-image] Falling back to HTML-post strategy (fetching page HTML and sending to Browserless)');
+            const fetchTimeout = Math.min(10000, timeoutMs);
+            const fc = new AbortController();
+            const ft = setTimeout(() => fc.abort(), fetchTimeout);
+            let html = null as string | null;
+            try {
+              const r = await fetch(screenshotUrl, { signal: fc.signal } as any);
+              clearTimeout(ft);
+              if (r.ok) {
+                html = await r.text();
+              } else {
+                console.warn('[print-image] Fetching preview HTML returned non-OK', r.status);
+              }
+            } catch (e) {
+              clearTimeout(ft);
+              console.warn('[print-image] Error fetching preview HTML:', (e as any)?.message || e);
+            }
+            if (html) {
+              const htmlPayload: any = { html, url: screenshotUrl };
+              try {
+                const controller2 = new AbortController();
+                const timer2 = setTimeout(() => controller2.abort(), timeoutMs);
+                const r2 = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(htmlPayload), signal: controller2.signal } as any);
+                clearTimeout(timer2);
+                if (!r2.ok) {
+                  const txt = await r2.text().catch(() => '');
+                  console.error('[print-image] Browserless (html) returned non-OK:', r2.status, txt);
+                } else {
+                  const arrBuf2 = await r2.arrayBuffer();
+                  const byteLen2 = (arrBuf2 && (arrBuf2 as ArrayBuffer).byteLength) || 0;
+                  console.log('[print-image] Browserless(html) returned bytes=', byteLen2);
+                  if (byteLen2 >= minBytes) {
+                    try { screenshotCache.set(cacheKeyUrl, { expires: Date.now() + CACHE_TTL_MS, buffer: arrBuf2 }); } catch (e) {}
+                    return arrBuf2;
+                  } else {
+                    console.warn('[print-image] Browserless(html) returned too-small image', byteLen2);
+                  }
+                }
+              } catch (errHtml: any) {
+                console.error('[print-image] Browserless(html) request error:', errHtml?.message || errHtml);
+              }
+            }
+          } catch (e) {
+            console.error('[print-image] HTML-post fallback failed:', (e as any)?.message || e);
+          }
           throw new Error('Browserless: all attempts failed');
         })();
 
