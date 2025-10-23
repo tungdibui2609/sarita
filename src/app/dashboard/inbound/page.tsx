@@ -947,7 +947,7 @@ export default function InboundPage() {
                             setImageModalLoading(false);
                             return;
                           }
-                          const url = `/api/inbound/print-image?code=${encodeURIComponent(slugOrCode)}`;
+                          const url = `/api/inbound/print-image?code=${encodeURIComponent(slugOrCode)}&view=inline`;
                           const res = await fetch(url);
                           if (!res.ok) throw new Error(await res.text());
                           const blob = await res.blob();
