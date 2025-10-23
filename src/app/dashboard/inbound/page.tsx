@@ -935,29 +935,49 @@ export default function InboundPage() {
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
                       <button onClick={async () => {
-                        try {
-                          const slugOrCode = d.slug || d.code;
-                          setImageModalError(null);
-                          setImageModalLoading(true);
-                          setImageModalOpen(true);
-                          // Kiểm tra cache trước
-                          if (imageBlobCache.current[slugOrCode]) {
+                        const slugOrCode = d.slug || d.code;
+                        setImageModalError(null);
+                        setImageModalLoading(true);
+                        setImageModalOpen(true);
+                        // Kiểm tra cache trước
+                        if (imageBlobCache.current[slugOrCode]) {
+                          try {
                             const objUrl = URL.createObjectURL(imageBlobCache.current[slugOrCode]);
                             setImageModalUrl(objUrl);
-                            setImageModalLoading(false);
                             return;
+                          } finally {
+                            setImageModalLoading(false);
                           }
-                          const url = `/api/inbound/print-image?code=${encodeURIComponent(slugOrCode)}&view=inline`;
-                          const res = await fetch(url);
-                          if (!res.ok) throw new Error(await res.text());
-                          const blob = await res.blob();
+                        }
+
+                        const url = `/api/inbound/print-image?code=${encodeURIComponent(slugOrCode)}&view=inline`;
+                        const controller = new AbortController();
+                        const timeoutMs = 30000; // 30s client-side timeout
+                        const to = setTimeout(() => controller.abort(), timeoutMs);
+                        try {
+                          const res = await fetch(url, { signal: controller.signal });
+                          if (!res.ok) {
+                            const txt = await res.text().catch(() => `HTTP ${res.status}`);
+                            throw new Error(txt || `HTTP ${res.status}`);
+                          }
+                          const contentType = (res.headers.get('content-type') || '').toLowerCase();
+                          // Read as ArrayBuffer to avoid streaming edge cases and construct blob explicitly
+                          const ab = await res.arrayBuffer();
+                          const blob = new Blob([ab], { type: contentType || 'image/png' });
+                          if (blob.size === 0) throw new Error('Ảnh rỗng (0 byte)');
+                          // Cache and show
                           imageBlobCache.current[slugOrCode] = blob;
                           const objUrl = URL.createObjectURL(blob);
                           setImageModalUrl(objUrl);
                         } catch (err: any) {
-                          setImageModalError(err?.message || 'Không tải được ảnh');
+                          if (err && err.name === 'AbortError') {
+                            setImageModalError('Quá thời gian chờ tải ảnh (timeout)');
+                          } else {
+                            setImageModalError(err?.message || 'Không tải được ảnh');
+                          }
                           setImageModalUrl(null);
                         } finally {
+                          clearTimeout(to);
                           setImageModalLoading(false);
                         }
                       }} className="px-2 py-1 rounded-md text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-900/20">Xem ảnh</button>
