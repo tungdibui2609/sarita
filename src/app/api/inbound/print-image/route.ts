@@ -15,9 +15,10 @@ const CACHE_TTL_MS = Number(process.env.SCREENSHOT_CACHE_TTL_MS || 60000);
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const code = (searchParams.get("code") || "").trim();
-    const view = (searchParams.get("view") || searchParams.get("inline") || "").toString();
-    if (!code) return new Response(JSON.stringify({ ok: false, error: "MISSING_CODE" }), { status: 400 });
+  const code = (searchParams.get("code") || "").trim();
+  const view = (searchParams.get("view") || searchParams.get("inline") || "").toString();
+  const explicitUrl = (searchParams.get("url") || "").trim();
+  if (!code && !explicitUrl) return new Response(JSON.stringify({ ok: false, error: "MISSING_CODE_OR_URL" }), { status: 400 });
 
     // Resolve absolute URL to the print page robustly
     const envBase = process.env.PRINT_BASE || "";
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
       const lower = (host || "").toLowerCase();
       if (!envBase && lower.includes("devtunnels.ms")) base = "http://localhost:3000";
     } catch {}
-    const printUrl = `${base.replace(/\/$/, "")}/xhd/${encodeURIComponent(code)}`;
+  const printUrl = code ? `${base.replace(/\/$/, "")}/xhd/${encodeURIComponent(code)}` : null;
 
     // Try Browserless Cloud first (configured via env). If not configured, fall back to Puppeteer.
     let browserlessBase = (process.env.BROWSERLESS_URL || "").trim();
@@ -70,11 +71,12 @@ export async function GET(req: NextRequest) {
           return new Response(inBuf, { status: 200, headers: resHeaders });
         }
 
-        // Always POST a minimal payload { url } to Browserless.
-        // Use a preview URL so the page doesn't auto-open the print dialog (window.print).
-        const previewSuffix = printUrl.includes('?') ? '&preview=1' : '?preview=1';
-        const screenshotUrl = `${printUrl}${previewSuffix}`;
-        const cacheKeyUrl = `${cacheKey}::url::preview`;
+        // Determine the screenshot target. If an explicit `url` query param was provided, use it verbatim.
+        // Otherwise use the generated printUrl and append ?preview=1 to avoid triggering print dialogs.
+        const screenshotUrl = explicitUrl
+          ? explicitUrl
+          : (printUrl + (printUrl!.includes('?') ? '&preview=1' : '?preview=1'));
+        const cacheKeyUrl = `${cacheKey}::url::${screenshotUrl}`;
         const reqPromise = (async () => {
           const payload = { url: screenshotUrl };
           const timeoutMs = Number(process.env.SCREENSHOT_TIMEOUT_MS || 30000);

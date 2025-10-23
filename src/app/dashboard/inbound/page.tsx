@@ -936,20 +936,20 @@ export default function InboundPage() {
                     <div className="inline-flex items-center gap-2">
                       <button onClick={async () => {
                         const slugOrCode = d.slug || d.code;
-                        // Immediate download flow (skip modal)
                         setImageModalError(null);
-                        // reuse downloading indicator to prevent parallel downloads
                         setDownloading(true);
                         try {
-                          // Check cache first
                           let blob = imageBlobCache.current[slugOrCode];
                           if (!blob) {
-                            const url = `/api/inbound/print-image?code=${encodeURIComponent(slugOrCode)}`;
+                            // Build public preview URL and call API with explicit url param
+                            const origin = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
+                            const previewUrl = `${origin}/xhd/${encodeURIComponent(slugOrCode)}?preview=1`;
+                            const apiUrl = `/api/inbound/print-image?url=${encodeURIComponent(previewUrl)}`;
                             const controller = new AbortController();
                             const timeoutMs = 30000;
                             const to = setTimeout(() => controller.abort(), timeoutMs);
                             try {
-                              const res = await fetch(url, { signal: controller.signal });
+                              const res = await fetch(apiUrl, { signal: controller.signal });
                               if (!res.ok) {
                                 const txt = await res.text().catch(() => `HTTP ${res.status}`);
                                 throw new Error(txt || `HTTP ${res.status}`);
@@ -961,19 +961,14 @@ export default function InboundPage() {
                               imageBlobCache.current[slugOrCode] = blob;
                             } finally { clearTimeout(to); }
                           }
-                          // Trigger download
                           const urlObj = URL.createObjectURL(blob);
                           const a = document.createElement('a');
-                          a.href = urlObj;
-                          a.download = `phieu-nhap-${(d.code || d.slug || 'unnamed').toString()}.png`;
-                          a.click();
+                          a.href = urlObj; a.download = `phieu-nhap-${(d.code || d.slug || 'unnamed').toString()}.png`; a.click();
                           URL.revokeObjectURL(urlObj);
                         } catch (err: any) {
-                          alert(err?.message || 'Tải ảnh thất bại');
-                        } finally {
-                          setDownloading(false);
-                        }
-                      }} className="px-2 py-1 rounded-md text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-900/20">Tải ảnh</button>
+                          alert(err?.message || 'Tải ảnh preview thất bại');
+                        } finally { setDownloading(false); }
+                      }} className="px-2 py-1 rounded-md text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-900/20">Tải preview</button>
                       <button onClick={() => onEdit(d)} className="px-2 py-1 rounded-md text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-900/20">Sửa</button>
                       <button onClick={() => onDelete(d)} className="px-2 py-1 rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20">Xóa</button>
                     </div>
