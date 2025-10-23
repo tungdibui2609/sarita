@@ -70,10 +70,13 @@ export async function GET(req: NextRequest) {
           return new Response(inBuf, { status: 200, headers: resHeaders });
         }
 
-        // Always POST a minimal payload { url } to Browserless
-        const cacheKeyUrl = `${cacheKey}::url`;
+        // Always POST a minimal payload { url } to Browserless.
+        // Use a preview URL so the page doesn't auto-open the print dialog (window.print).
+        const previewSuffix = printUrl.includes('?') ? '&preview=1' : '?preview=1';
+        const screenshotUrl = `${printUrl}${previewSuffix}`;
+        const cacheKeyUrl = `${cacheKey}::url::preview`;
         const reqPromise = (async () => {
-          const payload = { url: printUrl };
+          const payload = { url: screenshotUrl };
           const timeoutMs = Number(process.env.SCREENSHOT_TIMEOUT_MS || 30000);
           console.log(`[print-image] Browserless request start url=${printUrl} timeout=${timeoutMs}ms`);
           const controller = new AbortController();
