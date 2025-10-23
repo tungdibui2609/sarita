@@ -1,0 +1,39 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Typecheck (Next.js)",
+			"type": "shell",
+			"command": "node -e \"try{require('next/dist/build/webpack/config/blocks/typescript').withTypeScript(void 0);}catch(e){};console.log('TypeScript available')\"",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "build-next",
+			"type": "shell",
+			"command": "npm run build",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc",
+				"$eslint - stylish"
+			],
+			"group": "build"
+		},
+		{
+			"label": "install qrcode",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"install",
+				"qrcode"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$eslint - stylish"
+			],
+			"group": "build"
+		}
+	]
+}
