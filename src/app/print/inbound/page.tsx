@@ -331,6 +331,40 @@ function InboundContent() {
     return () => clearTimeout(t);
   }, [printed, loading, doc, printLink, qrDataUrl]);
 
+  // Download preview image button handler (visible only when ?preview=1)
+  async function downloadPreviewImage() {
+    try {
+      if (typeof window === 'undefined') return;
+      const href = window.location.href;
+      // Ensure preview=1 present
+      const u = new URL(href);
+      if (u.searchParams.get('preview') !== '1') u.searchParams.set('preview', '1');
+      const apiUrl = `/api/inbound/print-image?url=${encodeURIComponent(u.toString())}`;
+      const controller = new AbortController();
+      const timeoutMs = 30000;
+      const to = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(apiUrl, { signal: controller.signal });
+        if (!res.ok) {
+          const txt = await res.text().catch(() => `HTTP ${res.status}`);
+          throw new Error(txt || `HTTP ${res.status}`);
+        }
+        const ct = (res.headers.get('content-type') || '').toLowerCase();
+        const ab = await res.arrayBuffer();
+        const blob = new Blob([ab], { type: ct || 'image/png' });
+        if (blob.size === 0) throw new Error('Ảnh rỗng (0 byte)');
+        const urlObj = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = urlObj;
+        a.download = `phieu-nhap-${(doc?.code || 'preview').toString()}.png`;
+        a.click();
+        URL.revokeObjectURL(urlObj);
+      } finally { clearTimeout(to); }
+    } catch (err: any) {
+      alert(err?.message || 'Tải ảnh preview thất bại');
+    }
+  }
+
   // Load current version for this doc (show as suffix on code)
   useEffect(() => {
     let alive = true;
@@ -682,11 +716,11 @@ function InboundContent() {
           })()}
           {/* Note below signatures: keep the block left-aligned; only the link+QR pair are stacked with QR under the link */}
           {(() => {
-            // Hide the TEXT7 link/QR block when opened in preview mode (preview=1)
+            // When opened in preview mode (preview=1) show a compact download button instead of the full TEXT7 block
+            let previewModeLocal = false;
             try {
               const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams('');
-              const previewMode = params.get('preview') === '1';
-              if (previewMode) return null;
+              previewModeLocal = params.get('preview') === '1';
             } catch {}
             const raw = resolvePlaceholders("{{TEXT7}}");
             let text = (raw || "").replace(/<code>/gi, doc.code || "");
@@ -700,6 +734,15 @@ function InboundContent() {
             // Detect a URL to render as clickable
             const linkMatch = (printLink ? { 0: printLink } as any : text.match(/https?:\/\/[^\s]+/i));
             const linkUrl = printLink || (linkMatch ? (linkMatch[0] as string) : "");
+            if (previewModeLocal) {
+              return (
+                <div className="mt-4 [font-family:'Times_New_Roman',Times,serif]">
+                  <div className="w-full p-2 flex justify-center">
+                    <button onClick={() => downloadPreviewImage()} className="px-3 py-2 bg-emerald-600 text-white rounded-md">Tải ảnh</button>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div className="mt-4 [font-family:'Times_New_Roman',Times,serif]">
                 {/* Full-width bordered wrapper for TEXT7 (link) and QR with title */}
