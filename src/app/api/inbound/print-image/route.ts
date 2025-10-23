@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs + 2000);
     try {
-      const res = await fetch(endpoint, {
+      let res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -60,6 +60,35 @@ export async function GET(req: NextRequest) {
       clearTimeout(timer);
       if (!res.ok) {
         const txt = await res.text().catch(() => '');
+        // Log provider response for easier debugging in Vercel logs
+        try { console.error('Browserless responded with', res.status, txt && txt.slice ? txt.slice(0, 2000) : txt); } catch {}
+        // Some Browserless setups expect Authorization: Bearer <token> instead of token in query string.
+        // Try a retry with Authorization header for 401/403 responses.
+        if (res.status === 401 || res.status === 403) {
+          try {
+            const authEndpoint = `${browserlessBase.replace(/\/+$/, '')}/screenshot?timeout=${encodeURIComponent(String(timeoutMs))}`;
+            const retryRes = await fetch(authEndpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+              body: JSON.stringify(payload),
+              signal: controller.signal as any,
+            } as any);
+            if (retryRes.ok) {
+              const buf2 = await retryRes.arrayBuffer();
+              const byteLen2 = buf2 ? (buf2 as ArrayBuffer).byteLength : 0;
+              if (byteLen2 >= 100) {
+                const headers = new Headers({ 'Content-Type': 'image/png', 'Cache-Control': `public, max-age=${Math.floor((process.env.SCREENSHOT_CACHE_TTL_MS ? Number(process.env.SCREENSHOT_CACHE_TTL_MS) : 60000)/1000)}` });
+                headers.set('Content-Disposition', `inline; filename="phieu-${slug}.png"`);
+                return new NextResponse(Buffer.from(buf2 as any), { status: 200, headers });
+              }
+            } else {
+              const retryTxt = await retryRes.text().catch(() => '');
+              try { console.error('Browserless retry responded with', retryRes.status, retryTxt && retryTxt.slice ? retryTxt.slice(0, 2000) : retryTxt); } catch {}
+            }
+          } catch (e: any) {
+            try { console.error('Browserless auth-retry failed:', e && e.message ? e.message : e); } catch {}
+          }
+        }
         return NextResponse.json({ ok: false, error: 'BROWSERLESS_ERROR', status: res.status, body: txt }, { status: 502 });
       }
       const buf = await res.arrayBuffer();
