@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Head from "next/head";
 
 type Line = { product: string; code?: string; unit: string; qty: number; memo?: string; kg?: number | null };
 type Doc = { code: string; date: string; time?: string; warehouse: string; createdBy?: string; receiver?: string; description?: string; lines: Line[] };
@@ -47,6 +48,8 @@ function parseDMY(dateStr: string): { dd: number; mm: number; yy: number } | nul
 
 function InboundContent() {
   const sp = useSearchParams();
+  // Kiểm tra có phải chế độ snapshot không
+  const isSnapshot = sp.get("snapshot") === "1";
   const codeParam = (sp.get("code") || "").trim();
   // Allow coming from pretty URL /xhd/:slug via middleware rewrite (query not visible in address bar)
   const pathFromWindow = typeof window !== "undefined" ? window.location.pathname : "";
@@ -474,10 +477,17 @@ function InboundContent() {
   }, []);
 
   return (
-    <div className="p-6 print:p-0 text-[13px] leading-relaxed text-zinc-900">
+    <>
+      {isSnapshot && (
+        <Head>
+          <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" />
+        </Head>
+      )}
+      <div className={"p-6 print:p-0 text-[13px] leading-relaxed text-zinc-900 " + (isSnapshot ? " font-roboto" : "")}
+        style={isSnapshot ? { fontFamily: "Roboto, Arial, sans-serif" } : {}}>
       {!doc && (loading ? <div>Đang tải…</div> : <div>Không tìm thấy phiếu</div>)}
       {doc && (
-        <div>
+        <div className={isSnapshot ? "[font-family:'Roboto',Arial,sans-serif]" : ""}>
           {/* DEBUG panel removed - cleaned up for production */}
           {/* Top bar: logo + company info (left) and legal header pinned far-right */}
           <div className="relative mb-2">
@@ -497,10 +507,10 @@ function InboundContent() {
               <div>Ngày 22/12/2014 của Bộ Tài chính)</div>
             </div>
           </div>
-            <div className="text-center font-semibold text-[20px] mb-0 mt-9 [font-family:'Times_New_Roman',Times,serif]">PHIẾU NHẬP KHO</div>
+            <div className={"text-center font-semibold text-[20px] mb-0 mt-9 " + (isSnapshot ? "[font-family:'Roboto',Arial,sans-serif]" : "[font-family:'Times_New_Roman',Times,serif]")}>PHIẾU NHẬP KHO</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 items-start mb-0">
             <div></div>
-            <div className="text-center [font-family:'Times_New_Roman',Times,serif] text-[12px] font-bold">
+            <div className={"text-center text-[12px] font-bold " + (isSnapshot ? "[font-family:'Roboto',Arial,sans-serif]" : "[font-family:'Times_New_Roman',Times,serif]")}> 
               {(() => {
                 const d = parseDMY(doc.date);
                 if (!d) return <span>{doc.date}</span>;
@@ -513,7 +523,7 @@ function InboundContent() {
           {/* Mobile: wrap top info in a subtle card and add a section heading to clarify content */}
           <div className="block sm:hidden text-sm font-semibold text-zinc-700 mt-3 mb-1">Thông tin phiếu</div>
           <div className={`p-3 sm:p-0 bg-white sm:bg-transparent rounded-md sm:rounded-none border border-zinc-100 sm:border-0 ${isPreviewMode ? 'shadow-sm sm:shadow-none' : ''}`}>
-          <div className={`flex flex-col justify-between items-start gap-2 [font-family:'Times_New_Roman',Times,serif] text-[14px] font-normal mt-1`}>
+          <div className={`flex flex-col justify-between items-start gap-2 text-[14px] font-normal mt-1 ${isSnapshot ? '[font-family:Roboto,Arial,sans-serif]' : '[font-family:Times_New_Roman,Times,serif]'}`}>
             <div className="w-full sm:flex-1 min-w-0">
               <div className="flex items-start sm:items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -531,7 +541,7 @@ function InboundContent() {
           </div>
                     {/* readiness marker for headless screenshot: render only after QR is ready so screenshots include QR */}
                     {qrDataUrl ? <div id="print-ready" className="hidden" aria-hidden="true"></div> : null}
-          <div className="flex flex-col justify-between items-start [font-family:'Times_New_Roman',Times,serif] text-[14px] font-normal mt-1">
+          <div className={"flex flex-col justify-between items-start text-[14px] font-normal mt-1 " + (isSnapshot ? '[font-family:Roboto,Arial,sans-serif]' : '[font-family:Times_New_Roman,Times,serif]') }>
             <div className="w-full">- Nhập tại kho: {doc.warehouse}</div>
             <div className="w-full mt-1">
               <div className="flex items-center gap-2">
@@ -540,11 +550,11 @@ function InboundContent() {
               </div>
             </div>
           </div>
-          <div className="[font-family:'Times_New_Roman',Times,serif] text-[14px] font-normal mb-2 mt-1">- Diễn giải: {doc.description || ""}</div>
+          <div className={"text-[14px] font-normal mb-2 mt-1 " + (isSnapshot ? '[font-family:Roboto,Arial,sans-serif]' : '[font-family:Times_New_Roman,Times,serif]') }>- Diễn giải: {doc.description || ""}</div>
           </div>
 
           <div className="hidden sm:block">
-          <table className="w-full border-collapse table-fixed text-[12px] [font-family:'Times_New_Roman',Times,serif] print-strong-border">
+          <table className={"w-full border-collapse table-fixed text-[12px] print-strong-border " + (isSnapshot ? '[font-family:Roboto,Arial,sans-serif]' : '[font-family:Times_New_Roman,Times,serif]') }>
             <colgroup>
               <col className="w-[6%]" />
               <col className="w-[28%]" />
@@ -926,7 +936,8 @@ function InboundContent() {
   .print-strong-border th, .print-strong-border td { border-color: #404040 !important; border-width: 1.5px !important; }
   .print-strong-border thead th { border-width: 1.5px !important; }
   `}</style>
-    </div>
+      </div>
+    </>
   );
 }
 
