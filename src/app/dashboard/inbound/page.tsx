@@ -868,7 +868,7 @@ export default function InboundPage() {
                 const y = today.getFullYear();
                 const m = String(today.getMonth()+1).padStart(2,'0');
                 const dd = String(today.getDate()).padStart(2,'0');
-                a.download = `phieu-${(d.code||slugOrCode)}-${y}${m}${dd}.png`;
+                a.download = `phieu-${(d.code||slugOrCode)}-${y}${m}${dd}.jpg`;
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
