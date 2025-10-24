@@ -480,7 +480,22 @@ function InboundContent() {
     <>
       {isSnapshot && (
         <Head>
-          <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" />
+          <style>{`
+            @font-face {
+              font-family: 'Roboto';
+              src: url('/fonts/roboto.woff2') format('woff2');
+              font-weight: 400;
+              font-style: normal;
+              font-display: swap;
+            }
+            @font-face {
+              font-family: 'Roboto';
+              src: url('/fonts/roboto.woff2') format('woff2');
+              font-weight: 700;
+              font-style: normal;
+              font-display: swap;
+            }
+          `}</style>
         </Head>
       )}
       <div className={"p-6 print:p-0 text-[13px] leading-relaxed text-zinc-900 " + (isSnapshot ? " font-roboto" : "")}
