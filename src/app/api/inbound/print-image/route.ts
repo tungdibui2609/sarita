@@ -35,14 +35,30 @@ export async function GET(req: NextRequest) {
     const timeoutMs = Number(process.env.SCREENSHOT_TIMEOUT_MS || 30000);
     const endpoint = `${browserlessBase.replace(/\/+$/, '')}/screenshot?token=${encodeURIComponent(token)}&timeout=${encodeURIComponent(String(timeoutMs))}`;
 
-    // First try: the simpler payload that worked previously — wait for the '#print-ready' marker
-    // and capture the default viewport (some providers / pages behaved better with this payload).
-    const payload = {
-      url: targetUrl,
-      gotoOptions: { timeout: timeoutMs, waitUntil: 'networkidle2' },
-      waitForSelector: { selector: '#print-ready', timeout: Math.min(4000, timeoutMs), visible: true },
-      bestAttempt: true,
-    } as any;
+    // For snapshot requests we use a small injected script so we can:
+    // - wait for #print-ready to appear
+    // - scroll it into view (so QR / dynamic content is rendered)
+    // - then capture a full-page PNG
+    // This is more reliable than the simple JSON payload when the page
+    // needs a scroll / render step before a full-page screenshot.
+    const code = `
+      const page = await browser.newPage();
+      await page.goto("${targetUrl}", { waitUntil: "networkidle2", timeout: ${timeoutMs} });
+
+      // Wait for the #print-ready marker (but don't fail hard if missing)
+      const readyEl = await page.waitForSelector("#print-ready", { timeout: ${Math.min(8000, timeoutMs)}, visible: true }).catch(() => null);
+      if (readyEl) {
+        await readyEl.evaluate(el => el.scrollIntoView({ behavior: "instant", block: "center" }));
+        // small pause to let layout/images settle
+        await new Promise(r => setTimeout(r, 600));
+      }
+
+      // Capture full page as PNG to preserve QR fidelity
+      const buf = await page.screenshot({ fullPage: true, type: "png" });
+      return buf;
+    `;
+
+    const payload = { code } as any;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs + 2000);
