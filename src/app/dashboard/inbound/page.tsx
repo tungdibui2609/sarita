@@ -900,7 +900,7 @@ export default function InboundPage() {
                 </th>
                 <th className="text-left font-medium px-4 py-3">Số phiếu</th>
                 <th className="text-left font-medium px-4 py-3">Ngày</th>
-                <th className="text-left font-medium px-4 py-3">Người nhập</th>
+                <th className="text-left font-medium px-4 py-3">Người lập phiếu</th>
                 <th className="text-left font-medium px-4 py-3">Diễn giải</th>
                 <th className="text-right font-medium px-4 py-3">Hành động</th>
               </tr>
@@ -997,7 +997,7 @@ export default function InboundPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm mb-1">Người nhập</label>
+                <label className="block text-sm mb-1">Người lập phiếu</label>
                 <input value={editing.createdBy ?? ""} readOnly className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-200" />
               </div>
               <div>
@@ -1341,7 +1341,7 @@ export default function InboundPage() {
                 <div className="font-medium">{viewing.warehouse}</div>
               </div>
               <div>
-                <div className="text-sm text-zinc-500">Người nhập</div>
+                <div className="text-sm text-zinc-500">Người lập phiếu</div>
                 <div className="font-medium">{viewing.createdBy || ""}</div>
               </div>
               <div>
