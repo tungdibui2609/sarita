@@ -1810,10 +1810,10 @@ export default function InboundPage() {
                     <thead className="bg-zinc-50/70 dark:bg-zinc-800/50 text-zinc-500">
                       <tr>
                         <th className="text-left font-medium px-3 py-2">#</th>
-                        <th className="text-left font-medium px-3 py-2">Sản phẩm</th>
-                        <th className="text-left font-medium px-3 py-2">Đơn vị</th>
-                        <th className="text-right font-medium px-3 py-2">Số lượng</th>
-                        <th className="text-left font-medium px-3 py-2">Ghi chú</th>
+                        <th className="text-left font-medium px-3 py-2">SP</th>
+                        <th className="text-left font-medium px-3 py-2">ĐVT</th>
+                        <th className="text-right font-medium px-3 py-2">SL</th>
+                        <th className="text-left font-medium px-3 py-2">note</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
