@@ -132,7 +132,7 @@ function VersionsSection({ code, slug, onPreview }: { code?: string; slug?: stri
     }
     load();
     return () => { mounted = false; };
-  }, [code]);
+  }, [code, slug]);
 
   return (
     <div className="mt-6">

@@ -21,12 +21,13 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Keep pretty URL: rewrite /xhd/:code to /print/inbound?code=:code&via=xhd without changing the address bar
+  // Keep pretty URL: rewrite /xhd/:slug to /print/inbound?slug=:slug&via=xhd without changing the address bar
+  // Use the `slug` query param here (not `code`) so the client can prefer slug and avoid exposing internal codes.
   if (pathname.startsWith("/xhd/")) {
-    const code = pathname.slice("/xhd/".length).split("/")[0] || "";
+    const slug = pathname.slice("/xhd/".length).split("/")[0] || "";
     const url = req.nextUrl.clone();
     url.pathname = "/print/inbound";
-    url.searchParams.set("code", code);
+    url.searchParams.set("slug", slug);
     url.searchParams.set("via", "xhd");
     return NextResponse.rewrite(url);
   }

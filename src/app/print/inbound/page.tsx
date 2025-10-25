@@ -50,7 +50,8 @@ function InboundContent() {
   const sp = useSearchParams();
   // Kiểm tra có phải chế độ snapshot không
   const isSnapshot = sp.get("snapshot") === "1";
-  const codeParam = (sp.get("code") || "").trim();
+  // Accept either `slug` (preferred) or legacy `code` query param. Prefer slug when present.
+  const codeParam = (sp.get("slug") || sp.get("code") || "").trim();
   // Allow coming from pretty URL /xhd/:slug via middleware rewrite (query not visible in address bar)
   const pathFromWindow = typeof window !== "undefined" ? window.location.pathname : "";
   const slugFromPath = React.useMemo(() => {
@@ -218,6 +219,7 @@ function InboundContent() {
   }
         if (found) setDoc({
           code: found.code,
+          slug: found.slug, // preserve slug when present so downstream fetches can prefer slug
           date: found.date,
           time: found.time,
           warehouse: found.warehouse,
