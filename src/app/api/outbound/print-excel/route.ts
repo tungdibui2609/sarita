@@ -46,8 +46,8 @@ export async function POST(req: NextRequest) {
     const ExcelMod: any = await import("exceljs");
     const ExcelNS: any = ExcelMod?.Workbook ? ExcelMod : (ExcelMod?.default || ExcelMod);
 
-    // Template path for outbound
-    const templatePath = path.join(process.cwd(), "public", "mau_xuat.xlsx");
+  // Template path for outbound (per request: mauxuat.xlsx)
+  const templatePath = path.join(process.cwd(), "public", "mauxuat.xlsx");
     const hasTemplate = fs.existsSync(templatePath);
 
     if (hasTemplate && docs.length === 1) {

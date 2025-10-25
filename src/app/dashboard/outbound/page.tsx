@@ -1,68 +1,130 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-type Status = "Nháp" | "Đã duyệt" | "Đã hủy";
-type Line = { id: number; product: string; unit: string; qty: number };
+type Line = { id: number; product: string; unit: string; qty: number; code?: string; memo?: string };
 type Doc = {
   id: number;
   code: string;
   date: string; // YYYY-MM-DD
-  partner: string; // Khách hàng/Đơn vị nhận
+  time?: string;
   warehouse: string;
-  status: Status;
+  createdBy?: string;
+  receiver?: string;
+  sender?: string;
   items: number;
   quantity: number;
-  note?: string;
+  description?: string;
+  source?: string;
+  slug?: string;
   lines: Line[];
 };
 
-const WAREHOUSES = ["Kho Tổng", "Kho Nguyên liệu", "Kho Thành phẩm"];
-const UNITS = ["Cái", "Thùng", "Kg", "Lít"];
-const STATUSES: Status[] = ["Nháp", "Đã duyệt", "Đã hủy"];
+type Warehouse = { id?: string; name: string; isDefault?: boolean };
+type SimpleProduct = { code: string; name: string; group?: string; description?: string; uomSmall?: string; uomMedium?: string; uomLarge?: string };
 
-function dateToStr(d: Date) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function dateToStr(d: Date) { const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, "0"); const day = String(d.getDate()).padStart(2, "0"); return `${y}-${m}-${day}`; }
+function dateStrToDDMMYY(dateStr: string) { if (!dateStr) return ""; const [y, m, d] = dateStr.split("-"); if (!y || !m || !d) return ""; return `${d.padStart(2, "0")}${m.padStart(2, "0")}${y.slice(-2)}`; }
+function makeOutboundCodePrefix(dateStr: string) { const seg = dateStrToDDMMYY(dateStr); return `PXK${seg}`; }
+function computeNextOutboundCode(dateStr: string, docs: Doc[]) { const prefix = makeOutboundCodePrefix(dateStr); let maxSeq = 0; for (const d of docs) { const code = (d.code || "").toString().trim(); if (!code.startsWith(prefix)) continue; const m = code.slice(prefix.length).match(/^(\d{1,3})$/); if (m) { const n = parseInt(m[1], 10); if (Number.isFinite(n)) maxSeq = Math.max(maxSeq, n); } } const next = maxSeq + 1; const suffix = String(next).padStart(2, "0"); return prefix + suffix; }
+
+function LogsSection({ code, slug }: { code?: string; slug?: string }) {
+  const [logs, setLogs] = useState<Array<{ timestamp: string; user: string; action: string; details: string; slug?: string }>>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const q = slug ? `slug=${encodeURIComponent(slug)}` : `code=${encodeURIComponent(code ?? "")}`;
+        const res = await fetch(`/api/outbound/logs?${q}`);
+        const j = await res.json();
+        if (!mounted) return;
+        if (j?.ok && Array.isArray(j.logs)) setLogs(j.logs); else setLogs([]);
+      } catch { setLogs([]); } finally { if (mounted) setLoading(false); }
+    })();
+    return () => { mounted = false; };
+  }, [code, slug]);
+  return (
+    <div className="mt-6">
+      <h4 className="font-medium mb-2">Lịch sử thao tác</h4>
+      <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 p-3 text-sm">
+        {loading && <div className="text-zinc-500">Đang tải lịch sử...</div>}
+        {!loading && !logs.length && <div className="text-zinc-500">Không có lịch sử</div>}
+        {!loading && logs.length > 0 && (
+          <ul className="space-y-3">
+            {logs.map((l, idx) => (
+              <li key={idx} className="border-l-2 pl-3 py-1 border-zinc-200 dark:border-zinc-800">
+                <div className="text-xs text-zinc-500">{l.timestamp} • {l.user} • {l.action}{l.slug ? ` • ${l.slug}` : ''}</div>
+                <div className="whitespace-pre-line text-zinc-700 dark:text-zinc-200">{l.details}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
 }
 
-function genDocs(n = 24): Doc[] {
-  const today = new Date();
-  const arr: Doc[] = [];
-  for (let i = 1; i <= n; i++) {
-    const daysAgo = Math.floor(Math.random() * 28);
-    const d = new Date(today);
-    d.setDate(d.getDate() - daysAgo);
-    const lines: Line[] = Array.from({ length: 1 + (i % 3) }).map((_, idx) => ({
-      id: idx + 1,
-      product: `SP-${(i * 5 + idx + 7).toString().padStart(4, "0")}`,
-      unit: UNITS[(i + idx) % UNITS.length],
-      qty: 2 + ((i + idx) % 9),
-    }));
-    const qty = lines.reduce((s, l) => s + l.qty, 0);
-    arr.push({
-      id: i,
-      code: `PXK${String(i).padStart(5, "0")}`,
-      date: dateToStr(d),
-      partner: `KH ${((i % 6) + 1).toString().padStart(2, "0")}`,
-      warehouse: WAREHOUSES[i % WAREHOUSES.length],
-      status: STATUSES[i % STATUSES.length],
-      items: lines.length,
-      quantity: qty,
-      note: i % 4 === 0 ? "Phiếu xuất giao hàng" : undefined,
-      lines,
-    });
-  }
-  return arr;
+function VersionsSection({ code, slug, onPreview }: { code?: string; slug?: string; onPreview: (_snapshot: any, _version?: number) => void }) {
+  const [versions, setVersions] = useState<Array<{ version: number; timestamp: string; user: string; data: any }>>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const q = slug ? `slug=${encodeURIComponent(slug)}` : `code=${encodeURIComponent(code ?? "")}`;
+        const res = await fetch(`/api/outbound/versions?${q}`);
+        const j = await res.json();
+        if (!mounted) return;
+        if (j?.ok && Array.isArray(j.versions)) setVersions(j.versions); else setVersions([]);
+      } catch { setVersions([]); } finally { if (mounted) setLoading(false); }
+    })();
+    return () => { mounted = false; };
+  }, [code, slug]);
+  return (
+    <div className="mt-6">
+      <h4 className="font-medium mb-2">Phiên bản (versions)</h4>
+      <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 p-3 text-sm">
+        {loading && <div className="text-zinc-500">Đang tải phiên bản...</div>}
+        {!loading && !versions.length && <div className="text-zinc-500">Không có phiên bản</div>}
+        {!loading && versions.length > 0 && (
+          <ul className="space-y-2">
+            {versions.map((v, i) => {
+              const palettes = [
+                { border: 'border-emerald-400', dot: 'bg-emerald-400' },
+                { border: 'border-sky-400', dot: 'bg-sky-400' },
+                { border: 'border-amber-400', dot: 'bg-amber-400' },
+                { border: 'border-rose-400', dot: 'bg-rose-400' },
+                { border: 'border-indigo-400', dot: 'bg-indigo-400' },
+                { border: 'border-lime-400', dot: 'bg-lime-400' },
+              ];
+              const p = palettes[(v.version ?? i) % palettes.length];
+              return (
+                <li key={v.version} className={["flex items-center justify-between border-l-4 pl-3 py-2", p.border].join(' ')}>
+                  <div className="flex items-center gap-3">
+                    <span className={["w-3 h-3 rounded-full", p.dot].join(' ')} />
+                    <div className="text-xs text-zinc-600">v{v.version} • {v.timestamp} • {v.user}</div>
+                  </div>
+                  <div>
+                    <button onClick={() => onPreview(v.data, v.version)} className="px-2 py-1 rounded-md border border-zinc-200 text-sm mr-2">Xem</button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function OutboundPage() {
-  const [docs, setDocs] = useState<Doc[]>(() => genDocs());
+  const [docs, setDocs] = useState<Doc[]>([]);
+  const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [warehouse, setWarehouse] = useState<string | "Tất cả">("Tất cả");
-  const [status, setStatus] = useState<Status | "Tất cả">("Tất cả");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
   const [page, setPage] = useState(1);
@@ -70,22 +132,181 @@ export default function OutboundPage() {
 
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Doc | null>(null);
+  const [viewing, setViewing] = useState<Doc | null>(null);
+  const [previewSnapshot, setPreviewSnapshot] = useState<any | null>(null);
+  const [previewVersion, setPreviewVersion] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<number[]>([]);
+  const [downloading, setDownloading] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imagePreviewLoadingFor, setImagePreviewLoadingFor] = useState<string | null>(null);
+  const [imagePreviewError, setImagePreviewError] = useState<string | null>(null);
+  const [conversionVisible, setConversionVisible] = useState(false);
+  const [conversionCountdown, setConversionCountdown] = useState(15);
+  const [conversionProgress, setConversionProgress] = useState<number | null>(null);
+  const [conversionAbortController, setConversionAbortController] = useState<AbortController | null>(null);
+  const activeProgressPolls = useRef<Record<string, boolean>>({});
+
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const [tooltipInfo, setTooltipInfo] = useState<{ text: string; left: number; top: number; placement?: 'top' | 'right' | 'left' } | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const [tooltipLeftPx, setTooltipLeftPx] = useState<number | null>(null);
+  const [tooltipTopPx, setTooltipTopPx] = useState<number | null>(null);
+  const [tooltipPinned, setTooltipPinned] = useState(false);
+  const lastTriggerRef = useRef<HTMLElement | null>(null);
+  const touchTimer = useRef<number | null>(null);
+
+  function showTooltipAt(target: HTMLElement, text: string, placement: 'top' | 'right' | 'left' = 'top') {
+    if (!modalRef.current) { setTooltipInfo(null); return; }
+    try {
+      const modalRect = modalRef.current.getBoundingClientRect();
+      const rect = target.getBoundingClientRect();
+      const scrollTop = (modalRef.current as HTMLElement).scrollTop || 0;
+      if (placement === 'top') {
+        let centerX = rect.left - modalRect.left + rect.width / 2;
+        const top = rect.top - modalRect.top + scrollTop - 8;
+        const minX = 12; const maxX = Math.max(12, modalRect.width - 12);
+        centerX = Math.max(minX, Math.min(maxX, centerX));
+        setTooltipInfo({ text, left: Math.round(centerX), top: Math.round(top), placement: 'top' });
+        setTooltipLeftPx(null); setTooltipTopPx(null);
+      } else if (placement === 'right') {
+        const left = rect.right - modalRect.left + 8;
+        const centerY = rect.top - modalRect.top + scrollTop + rect.height / 2;
+        setTooltipInfo({ text, left: Math.round(left), top: Math.round(centerY), placement: 'right' });
+        setTooltipLeftPx(null); setTooltipTopPx(null);
+      } else {
+        const rightEdge = rect.left - modalRect.left - 8;
+        const centerY = rect.top - modalRect.top + scrollTop + rect.height / 2;
+        setTooltipInfo({ text, left: Math.round(rightEdge), top: Math.round(centerY), placement: 'left' });
+        setTooltipLeftPx(null); setTooltipTopPx(null);
+      }
+    } catch { setTooltipInfo(null); }
+  }
+  function showTooltip(e: any, text: string, placement: 'top' | 'right' | 'left' = 'top') { try { const tgt = (e.currentTarget ?? e.target) as HTMLElement; if (tgt) showTooltipAt(tgt, text, placement); } catch {} }
+  function hideTooltip() { setTooltipInfo(null); if (touchTimer.current) { window.clearTimeout(touchTimer.current); touchTimer.current = null; } }
+  function handleTouchStart(e: any, text: string, placement: 'top' | 'right' | 'left' = 'top') {
+    if (touchTimer.current) window.clearTimeout(touchTimer.current);
+    const tgt = (e.currentTarget ?? e.target) as HTMLElement;
+    touchTimer.current = window.setTimeout(() => { if (tgt) { lastTriggerRef.current = tgt; showTooltipAt(tgt, text, placement); setTooltipPinned(true); } touchTimer.current = null; }, 500) as unknown as number;
+  }
+  function handleTouchEnd() { if (touchTimer.current) { window.clearTimeout(touchTimer.current); touchTimer.current = null; } }
+  useEffect(() => { return () => { if (touchTimer.current) window.clearTimeout(touchTimer.current); }; }, []);
+  useEffect(() => {
+    if (!tooltipPinned) return;
+    function onPointerDown(ev: PointerEvent) {
+      try {
+        const t = ev.target as Node | null;
+        const isInTooltip = tooltipRef.current && t && tooltipRef.current.contains(t);
+        const isInTrigger = lastTriggerRef.current && t && lastTriggerRef.current.contains(t);
+        if (!isInTooltip && !isInTrigger) hideTooltip();
+      } catch { hideTooltip(); }
+    }
+    function onKey(ev: KeyboardEvent) { if (ev.key === 'Escape') hideTooltip(); }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKey); };
+  }, [tooltipPinned]);
+  useLayoutEffect(() => {
+    if (!tooltipInfo) { setTooltipLeftPx(null); return; }
+    if (!tooltipRef.current || !modalRef.current) return;
+    try {
+      const modalRect = modalRef.current.getBoundingClientRect();
+      const ttRect = tooltipRef.current.getBoundingClientRect();
+      const tooltipWidth = ttRect.width;
+      if (tooltipInfo.placement === 'right') {
+        const tooltipHeight = ttRect.height; let desiredTop = tooltipInfo.top - tooltipHeight / 2; const minTop = 12; const maxTop = Math.max(12, modalRect.height - tooltipHeight - 12); desiredTop = Math.max(minTop, Math.min(maxTop, desiredTop)); setTooltipTopPx(Math.round(desiredTop));
+      } else if (tooltipInfo.placement === 'left') {
+        const tooltipHeight = ttRect.height; let desiredTop = tooltipInfo.top - tooltipHeight / 2; const minTop = 12; const maxTop = Math.max(12, modalRect.height - tooltipHeight - 12); desiredTop = Math.max(minTop, Math.min(maxTop, desiredTop)); let desiredLeft = tooltipInfo.left - tooltipWidth; const minLeft = 12; const maxLeft = Math.max(12, modalRect.width - tooltipWidth - 12); desiredLeft = Math.max(minLeft, Math.min(maxLeft, desiredLeft)); setTooltipTopPx(Math.round(desiredTop)); setTooltipLeftPx(Math.round(desiredLeft));
+      } else {
+        let desired = tooltipInfo.left - tooltipWidth / 2; const min = 12; const max = Math.max(12, modalRect.width - tooltipWidth - 12); desired = Math.max(min, Math.min(max, desired)); setTooltipLeftPx(Math.round(desired));
+      }
+    } catch {}
+  }, [tooltipInfo]);
+
+  async function runConversionFetch<T>(fn: (signal: AbortSignal) => Promise<T>, slug?: string, useProgress = false): Promise<T> {
+    if (conversionVisible) return Promise.reject(new Error("Conversion already in progress"));
+    setConversionVisible(true); setConversionCountdown(15); setConversionProgress(null); const controller = new AbortController(); setConversionAbortController(controller);
+    let localCount = 15; let countdownTimer: ReturnType<typeof setInterval> | null = setInterval(() => { localCount -= 1; setConversionCountdown(localCount); if (localCount <= 0 && countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } }, 1000);
+    let pollTimer: ReturnType<typeof setInterval> | null = null; let startTimer: ReturnType<typeof setTimeout> | null = null;
+    if (slug && useProgress) {
+      if (!activeProgressPolls.current[slug]) {
+        activeProgressPolls.current[slug] = true;
+        const poll = async () => {
+          try {
+            const res = await fetch(`/api/outbound/print-image/progress?slug=${encodeURIComponent(slug)}`, { signal: controller.signal });
+            if (res.status === 404) { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } activeProgressPolls.current[slug] = false; return; }
+            if (!res.ok) return; const j = await res.json(); if (j && typeof j.progress === 'number') { setConversionProgress(Math.max(0, Math.min(100, Math.round(j.progress)))); }
+          } catch { /* ignore */ }
+        };
+        startTimer = setTimeout(() => { void poll(); }, 500);
+        pollTimer = setInterval(poll, 1500);
+      }
+    }
+    try {
+      const result = await fn(controller.signal);
+      if (conversionProgress != null) {
+        await new Promise<void>((resolve) => { const check = setInterval(() => { if (conversionProgress != null && conversionProgress >= 100) { clearInterval(check); resolve(); } if (localCount <= 0) { clearInterval(check); resolve(); } }, 250); });
+      } else if (localCount > 0) {
+        await new Promise((resolve) => { const check = setInterval(() => { if (localCount <= 0) { clearInterval(check); resolve(null as any); } }, 150); });
+      }
+      return result;
+    } finally {
+      if (countdownTimer) clearInterval(countdownTimer); if (pollTimer) clearInterval(pollTimer); if (startTimer) clearTimeout(startTimer);
+      if (slug && useProgress) { activeProgressPolls.current[slug] = false; }
+      setConversionVisible(false); setConversionCountdown(15); setConversionProgress(null); setConversionAbortController(null);
+    }
+  }
+
+  const [productMap, setProductMap] = useState<Map<string, any>>(new Map());
+  const [products, setProducts] = useState<SimpleProduct[]>([]);
+  const [uoms, setUoms] = useState<string[]>([]);
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [receiverRows, setReceiverRows] = useState<Array<{ name: string; [k: string]: string }>>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [openSuggestFor, setOpenSuggestFor] = useState<number | null>(null);
+  const [suggestUp, setSuggestUp] = useState<boolean>(false);
+  const [suggestWidth, setSuggestWidth] = useState<number | null>(null);
+
+  const receiverOptions = useMemo(() => {
+    const seen = new Set<string>(); const out: string[] = []; const add = (v?: string) => { const s = (v || "").toString().trim(); if (!s) return; const key = s.toLowerCase(); if (!seen.has(key)) { seen.add(key); out.push(s); } };
+    const s = settings || {};
+    for (const r of receiverRows) { if (r && typeof r.name === "string") add(r.name); }
+    for (const k of Object.keys(s)) { if (/^NGUOI_?NHAN(\d+)?$/i.test(k)) add((s as any)[k]); }
+    if ((s as any).TEXT7) add((s as any).TEXT7);
+    if (out.length === 0) { for (const v of Object.values(s)) { add(v as string); if (out.length >= 5) break; } }
+    return out;
+  }, [settings, receiverRows]);
+
+  useEffect(() => { let alive = true; (async () => { try { const res = await fetch("/api/settings/inbound/receivers", { cache: "no-store" }); const js = await res.json(); if (!alive) return; const list = Array.isArray(js?.receivers) ? js.receivers : []; setReceiverRows(list); } catch {} })(); return () => { alive = false; }; }, []);
+  useEffect(() => { let alive = true; (async () => { try { setLoading(true); const res = await fetch("/api/outbound", { cache: "no-store" }); const js = await res.json(); if (!alive) return; if (js?.ok && Array.isArray(js.docs)) {
+    const mapped: Doc[] = js.docs.map((d: any, idx: number) => ({ id: idx + 1, code: d.code || "", date: normalizeDate(d.date || ""), time: d.time || "", warehouse: d.warehouse || "", createdBy: d.createdBy || d.user || "", receiver: d.receiver || d.nguoiNhan || "", sender: d.sender || d.nguoiGui || "", items: Number(d.items || (d.lines?.length ?? 0)) || 0, quantity: Number(d.quantity || 0) || 0, description: d.description || d.note || "", source: d.source || "", slug: d.slug || "", lines: Array.isArray(d.lines) ? d.lines.map((l: any, i: number) => ({ id: i + 1, product: `${l.productCode || ""}${l.productName ? " - " + l.productName : ""}`.trim(), code: l.productCode || undefined, unit: l.unit || "", qty: Number(l.qty || 0), memo: l.memo || "" })) : [], })); setDocs(mapped); } } catch {} finally { setLoading(false); } })(); return () => { alive = false; }; }, []);
+  useEffect(() => { let alive = true; (async () => { try { const res = await fetch("/api/settings/inbound", { cache: "no-store" }); const js = await res.json(); if (!alive) return; setSettings((js?.settings || {}) as Record<string, string>); } catch {} })(); return () => { alive = false; }; }, []);
+  useEffect(() => { let alive = true; (async () => { try { const res = await fetch("/api/warehouses", { cache: "no-store" }); const js = await res.json(); if (!alive) return; const list = Array.isArray(js?.warehouses) ? js.warehouses : []; setWarehouses(list); } catch {} })(); return () => { alive = false; }; }, []);
+  useEffect(() => { const def = warehouses.find(w => w.isDefault)?.name; if (def) setWarehouse((cur) => (cur && cur !== "Tất cả" ? cur : def)); }, [warehouses]);
+  useEffect(() => { if (!showModal) return; if (!editing || editing.id !== 0) return; if (editing.warehouse) return; const def = warehouses.find(w => w.isDefault)?.name; if (def) setEditing(prev => prev ? { ...(prev as Doc), warehouse: def } : prev); }, [showModal, editing, warehouses]);
+  useEffect(() => { let alive = true; (async () => { try { const res = await fetch("/api/products", { cache: "no-store" }); const js = await res.json(); if (!alive) return; const arr = Array.isArray(js?.products) ? js.products : []; const map = new Map<string, any>(); const list: SimpleProduct[] = []; for (const p of arr) { const code = (p.code || "").toString().trim(); if (!code) continue; map.set(code, { uomSmall: (p.uomSmall || "").toString().trim(), uomMedium: (p.uomMedium || "").toString().trim(), uomLarge: (p.uomLarge || "").toString().trim(), rSM: parseFloat((p.ratioSmallToMedium || "").toString().replace(/,/g, ".")) || 0, rML: parseFloat((p.ratioMediumToLarge || "").toString().replace(/,/g, ".")) || 0, }); list.push({ code, name: (p.name || "").toString(), group: (p.group || "").toString(), description: (p.description || "").toString(), uomSmall: p.uomSmall, uomMedium: p.uomMedium, uomLarge: p.uomLarge, }); } setProductMap(map); setProducts(list); } catch {} })(); return () => { alive = false; }; }, []);
+  useEffect(() => { let alive = true; (async () => { try { const res = await fetch("/api/products/uoms", { cache: "no-store" }); const js = await res.json(); if (!alive) return; const arr = Array.isArray(js?.uoms) ? js.uoms : []; setUoms(arr); } catch {} })(); return () => { alive = false; }; }, []);
+
+  function normalizeUom(u: string | undefined) { return (u || "").toString().trim().toLowerCase(); }
+  function stripAccents(str: string) { try { return str.normalize("NFD").replace(/\p{Diacritic}+/gu, ""); } catch { return str; } }
+  function filterProducts(query: string, limit = 8): SimpleProduct[] { const q = (query || "").trim().toLowerCase(); if (!q) return products.slice(0, Math.min(limit, products.length)); const q2 = stripAccents(q); const out: SimpleProduct[] = []; for (const p of products) { const code = (p.code || "").toString(); const name = (p.name || "").toString(); const grp = (p.group || "").toString(); const desc = (p.description || "").toString(); const hay = `${code} ${name} ${grp} ${desc}`.toLowerCase(); const hay2 = stripAccents(hay); if (hay.includes(q) || hay2.includes(q2)) { out.push(p); if (out.length >= limit) break; } } return out; }
+  function getUnitsForLine(line: Line) { const code = (line.code || (line.product || "").toString().split(" - ")[0] || "").toString().trim(); if (code) { const prod = productMap.get(code); if (prod) { const arr = [prod.uomSmall || "", prod.uomMedium || "", prod.uomLarge || ""].map((s: string) => (s||"").toString().trim()).filter(Boolean); const uniq: string[] = []; for (const a of arr) if (!uniq.includes(a)) uniq.push(a); if (uniq.length) return uniq; } } return uoms.slice(); }
+  function qtyToKg(line: Line): number | null { const code = (line.code || (line.product || "").split(" - ")[0]).trim(); if (!code) return null; const prod = productMap.get(code); if (!prod) return null; const uSmall = normalizeUom(prod.uomSmall); const uMed = normalizeUom(prod.uomMedium); const uLarge = normalizeUom(prod.uomLarge); const rSM = Number(prod.rSM) || 0; const rML = Number(prod.rML) || 0; const unit = normalizeUom(line.unit); const isKgSmall = uSmall === normalizeUom("Kg"); const isKgMed = uMed === normalizeUom("Kg"); const isKgLarge = uLarge === normalizeUom("Kg"); if (!isKgSmall && !isKgMed && !isKgLarge) return null; const qty = Number(line.qty) || 0; if (isKgSmall) { if (unit === uSmall) return qty; if (unit === uMed) return rSM > 0 ? qty * rSM : null; if (unit === uLarge) return rSM > 0 && rML > 0 ? qty * rSM * rML : null; return null; } if (isKgMed) { if (unit === uMed) return qty; if (unit === uSmall) return rSM > 0 ? qty / rSM : null; if (unit === uLarge) return rML > 0 ? qty * rML : null; return null; } if (unit === uLarge) return qty; if (unit === uMed) return rML > 0 ? qty / rML : null; if (unit === uSmall) return rSM > 0 && rML > 0 ? qty / (rSM * rML) : null; return null; }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const nameToId = new Map<string, string>();
+    for (const w of warehouses) { if (!w) continue; const nm = (w.name || "").toString(); const id = (w.id || "").toString(); if (nm) nameToId.set(nm, id); }
     return docs.filter((d) => {
-      const matchesQ = q ? [d.code, d.partner].some((v) => v.toLowerCase().includes(q)) : true;
+      const whName = d.warehouse || ""; const whId = nameToId.get(whName) || "";
+      const linesText = (d.lines || []).map(l => `${l.product || ''} ${l.memo || ''}`).join(' ');
+      const matchesQ = q ? [d.code, d.createdBy ?? "", d.description ?? "", d.source ?? "", whName, whId, linesText].some((v) => (v || "").toString().toLowerCase().includes(q)) : true;
       const matchesWh = warehouse === "Tất cả" ? true : d.warehouse === warehouse;
-      const matchesStatus = status === "Tất cả" ? true : d.status === status;
-      const df = dateFrom ? new Date(dateFrom) : null;
-      const dt = dateTo ? new Date(dateTo) : null;
-      const dd = new Date(d.date);
-      const matchesFrom = df ? dd >= df : true;
-      const matchesTo = dt ? dd <= dt : true;
-      return matchesQ && matchesWh && matchesStatus && matchesFrom && matchesTo;
+      const df = dateFrom ? new Date(dateFrom) : null; const dt = dateTo ? new Date(dateTo) : null; const dd = new Date(d.date);
+      const matchesFrom = df ? dd >= df : true; const matchesTo = dt ? dd <= dt : true;
+      return matchesQ && matchesWh && matchesFrom && matchesTo;
     });
-  }, [docs, query, warehouse, status, dateFrom, dateTo]);
+  }, [docs, query, warehouse, dateFrom, dateTo, warehouses]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -93,101 +314,34 @@ export default function OutboundPage() {
   const items = filtered.slice(start, start + pageSize);
 
   function onCreate() {
-    setEditing({
-      id: 0,
-      code: "",
-      date: dateToStr(new Date()),
-      partner: "",
-      warehouse: WAREHOUSES[0],
-      status: "Nháp",
-      items: 0,
-      quantity: 0,
-      note: "",
-      lines: [],
-    });
-    setShowModal(true);
+    const todayStr = dateToStr(new Date()); const code = computeNextOutboundCode(todayStr, docs); const defaultWh = "";
+    let currentUser = ""; try { currentUser = localStorage.getItem("userName") || localStorage.getItem("userUsername") || ""; } catch {}
+    const defaultReceiver = (receiverOptions[0] || (settings as any).NGUOI_NHAN || (settings as any).TEXT7 || Object.values(settings || {})[0] || "");
+    setEditing({ id: 0, code, date: todayStr, warehouse: defaultWh, createdBy: currentUser, receiver: (defaultReceiver || "").toString(), items: 0, quantity: 0, description: "", source: "", lines: [] }); setShowModal(true);
   }
   function onEdit(d: Doc) { setEditing({ ...d, lines: d.lines.map(l => ({ ...l })) }); setShowModal(true); }
-  function onDelete(d: Doc) { if (!confirm(`Xóa phiếu ${d.code}?`)) return; setDocs((prev) => prev.filter((x) => x.id !== d.id)); }
-  function addLine() {
-    if (!editing) return;
-    const nextId = (editing.lines.at(-1)?.id ?? 0) + 1;
-    setEditing({ ...editing, lines: [...editing.lines, { id: nextId, product: "", unit: UNITS[0], qty: 1 }] });
-  }
-  function removeLine(id: number) {
-    if (!editing) return;
-    setEditing({ ...editing, lines: editing.lines.filter((l) => l.id !== id) });
-  }
+  async function onDelete(d: Doc) { if (!confirm(`Xóa phiếu ${d.code}?`)) return; try { const currentUser = (() => { try { return localStorage.getItem('userName') || localStorage.getItem('userUsername') || ''; } catch { return ''; } })(); const res = await fetch('/api/outbound', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: d.code, user: currentUser }) }); const js = await res.json(); if (!js?.ok) { alert('Xóa thất bại: ' + (js?.error || 'Lỗi server')); return; } setDocs((prev) => prev.filter((x) => x.id !== d.id)); } catch (e: any) { alert('Lỗi xóa: ' + (e?.message || e)); } }
+  function addLine() { if (!editing) return; const nextId = (editing.lines.at(-1)?.id ?? 0) + 1; const defaultUnit = uoms[0] || ""; setEditing({ ...editing, lines: [...editing.lines, { id: nextId, product: "", unit: defaultUnit, qty: 1 }] }); }
+  function removeLine(id: number) { if (!editing) return; setEditing({ ...editing, lines: editing.lines.filter((l) => l.id !== id) }); }
   function saveDoc() {
-    if (!editing) return;
-    if (!editing.code) {
-      const nextNum = (docs.length ? Math.max(...docs.map((x) => x.id)) : 0) + 1;
-      editing.code = `PXK${String(nextNum).padStart(5, "0")}`;
-    }
-    if (!editing.date || !editing.partner) { alert("Vui lòng nhập Ngày và Đơn vị nhận"); return; }
-    const qty = editing.lines.reduce((s, l) => s + (Number(l.qty) || 0), 0);
-    editing.items = editing.lines.length;
-    editing.quantity = qty;
-    setDocs((prev) => {
-      if (editing.id === 0) {
-        const newId = prev.length ? Math.max(...prev.map((x) => x.id)) + 1 : 1;
-        return [{ ...editing, id: newId }, ...prev];
-      }
-      return prev.map((x) => (x.id === editing.id ? editing : x));
-    });
-    setShowModal(false);
-    setEditing(null);
+    if (!editing || saving) return; if (!editing.date) { alert("Vui lòng nhập Ngày"); return; } if (!editing.warehouse) { alert("Vui lòng chọn Kho"); return; }
+    if (!editing.createdBy) { try { const fallback = localStorage.getItem("userName") || localStorage.getItem("userUsername") || ""; if (fallback) editing.createdBy = fallback; } catch {} }
+    const invalid = editing.lines.some((l) => { const code = (l.code || (l.product || "").split(" - ")[0]).trim(); const qty = Number(l.qty) || 0; return !code || !l.unit || qty <= 0; }); if (invalid) { alert("Vui lòng chọn sản phẩm, đơn vị và số lượng > 0 cho mỗi dòng"); return; }
+    const qty = editing.lines.reduce((s, l) => s + (Number(l.qty) || 0), 0); editing.items = editing.lines.length; editing.quantity = qty;
+    (async () => { try { setSaving(true); if (editing.id === 0) { const payload = { date: editing.date, time: editing.time || "", warehouse: editing.warehouse, createdBy: editing.createdBy || "", user: (() => { try { return localStorage.getItem('userName') || localStorage.getItem('userUsername') || editing.createdBy || ''; } catch { return editing.createdBy || ''; } })(), receiver: editing.receiver || "", description: editing.description || "", source: editing.source || "", lines: editing.lines.map(l => ({ code: l.code, product: l.product, unit: l.unit, qty: l.qty, memo: l.memo || "" })), logEntry: (() => { try { const now = new Date(); const hh = String(now.getHours()).padStart(2, '0'); const mm = String(now.getMinutes()).padStart(2, '0'); const dd = String(now.getDate()).padStart(2, '0'); const mo = String(now.getMonth() + 1).padStart(2, '0'); const yyyy = now.getFullYear(); const user = (editing.createdBy || localStorage.getItem('userName') || localStorage.getItem('userUsername') || '').toString(); return `Lúc ${hh}:${mm} - ${dd}/${mo}/${yyyy} - ${user} - Đã tạo phiếu mới, chưa chỉnh sửa.`; } catch { return '' } })(), }; const res = await fetch("/api/outbound", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); const js = await res.json(); if (!js?.ok) throw new Error(js?.error || "Không lưu được phiếu"); const d = js.doc; const mapped: Doc = { id: (docs.length ? Math.max(...docs.map((x) => x.id)) + 1 : 1), code: d.code, date: d.date, time: d.time, warehouse: d.warehouse, createdBy: d.createdBy, receiver: d.receiver || d.nguoiNhan || "", sender: d.sender || d.nguoiGui || "", slug: d.slug || "", items: Number(d.items || (d.lines?.length ?? 0)) || 0, quantity: Number(d.quantity || 0) || 0, description: d.description || d.note || "", source: d.source || "", lines: Array.isArray(d.lines) ? d.lines.map((l: any, i: number) => ({ id: i + 1, product: `${l.productCode || ""}${l.productName ? " - " + l.productName : ""}`.trim(), code: l.productCode || undefined, unit: l.unit || "", qty: Number(l.qty || 0), memo: l.memo || "" })) : [], }; setDocs(prev => [mapped, ...prev]); } else { try { const current = docs.find(x => x.id === editing.id); const changes: string[] = []; if (current) { if ((current.date || '') !== (editing.date || '')) changes.push(`Thay đổi ngày: "${current.date}" => "${editing.date}"`); if ((current.warehouse || '') !== (editing.warehouse || '')) changes.push(`Thay đổi kho: "${current.warehouse}" => "${editing.warehouse}"`); if ((current.receiver || '') !== (editing.receiver || '')) changes.push(`Thay đổi người nhận: "${current.receiver}" => "${editing.receiver}"`); if ((current.description || '') !== (editing.description || '')) changes.push(`Thay đổi diễn giải`); if ((current.lines?.length || 0) !== (editing.lines?.length || 0)) changes.push(`Thay đổi số dòng: ${current.lines?.length || 0} => ${editing.lines?.length || 0}`); }
+      const now = new Date(); const hh = String(now.getHours()).padStart(2, '0'); const mm = String(now.getMinutes()).padStart(2, '0'); const dd = String(now.getDate()).padStart(2, '0'); const mo = String(now.getMonth() + 1).padStart(2, '0'); const yyyy = now.getFullYear(); const user = (editing.createdBy || localStorage.getItem('userName') || localStorage.getItem('userUsername') || '').toString(); const logEntry = `Lúc ${hh}:${mm} - ${dd}/${mo}/${yyyy} - ${user} - ${changes.length ? changes.join('; ') : 'Đã cập nhật phiếu.'}`;
+      const patchPayload = { code: editing.code, date: editing.date, time: editing.time || '', warehouse: editing.warehouse, createdBy: editing.createdBy || '', user: (() => { try { return localStorage.getItem('userName') || localStorage.getItem('userUsername') || editing.createdBy || ''; } catch { return editing.createdBy || ''; } })(), receiver: editing.receiver || '', description: editing.description || '', source: editing.source || '', lines: editing.lines.map(l => ({ code: l.code, product: l.product, unit: l.unit, qty: l.qty, memo: l.memo || '' })), logEntry, };
+      const res = await fetch('/api/outbound', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchPayload) }); const js = await res.json(); if (!js?.ok) throw new Error(js?.error || 'Không cập nhật được phiếu'); setDocs((prev) => prev.map((x) => (x.id === editing.id ? editing : x))); } catch (err: any) { alert('Lỗi khi cập nhật phiếu: ' + (err?.message || err)); } }
+      setShowModal(false); setEditing(null);
+    } catch (e: any) { alert(e?.message || "Lỗi không xác định khi lưu"); } finally { setSaving(false); } })();
   }
 
-  function toggleSelect(id: number) {
-    setSelected((prev) => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  }
-  function toggleSelectAllPage() {
-    const pageIds = items.map(i => i.id);
-    const allSelected = pageIds.every(id => selected.includes(id));
-    if (allSelected) setSelected(prev => prev.filter(id => !pageIds.includes(id)));
-    else setSelected(prev => Array.from(new Set([...prev, ...pageIds])));
-  }
-  function approveSelected() {
-    if (selected.length === 0) { alert("Vui lòng chọn ít nhất 1 phiếu"); return; }
-    setDocs(prev => prev.map(d => selected.includes(d.id) && d.status === "Nháp" ? { ...d, status: "Đã duyệt" } : d));
-  }
-  async function exportSelectedExcel() {
-    if (selected.length === 0) { alert("Vui lòng chọn ít nhất 1 phiếu để xuất"); return; }
-    const dataSel = docs.filter((d) => selected.includes(d.id));
-    if (dataSel.length === 0) { alert("Không có dữ liệu để xuất"); return; }
-    const payload = dataSel.map((d) => ({
-      code: d.code,
-      date: d.date,
-      partner: d.partner,
-      warehouse: d.warehouse,
-      status: d.status,
-      note: d.note,
-      lines: d.lines.map((l) => ({ product: l.product, unit: l.unit, qty: l.qty })),
-    }));
-    try {
-      const res = await fetch("/api/outbound/print-excel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ docs: payload }) });
-      if (!res.ok) throw new Error(await res.text());
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const today = dateToStr(new Date());
-      a.href = url; a.download = `phieu-xuat-${today}.xlsx`; a.click();
-      URL.revokeObjectURL(url);
-    } catch (e: any) {
-      alert(e?.message || "Xuất Excel thất bại");
-    }
-  }
-
-  function printSelectedBrowser() {
-    if (selected.length !== 1) { alert("Vui lòng chọn đúng 1 phiếu để in"); return; }
-    const d = docs.find(x => x.id === selected[0]);
-    if (!d) { alert("Không tìm thấy phiếu đã chọn"); return; }
-    try {
-      localStorage.setItem("qlk_print_outbound", JSON.stringify(d));
-    } catch {}
-    window.open(`/print/outbound?code=${encodeURIComponent(d.code)}`, "_blank");
-  }
+  function toggleSelect(id: number) { setSelected((prev) => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]); }
+  function toggleSelectAllPage() { const pageIds = items.map(i => i.id); const allSelected = pageIds.every(id => selected.includes(id)); if (allSelected) setSelected(prev => prev.filter(id => !pageIds.includes(id))); else setSelected(prev => Array.from(new Set([...prev, ...pageIds]))); }
+  async function exportSelectedExcel() { if (selected.length === 0) { alert("Vui lòng chọn ít nhất 1 phiếu để xuất"); return; } if (downloading) return; const dataSel = docs.filter((d) => selected.includes(d.id)); if (dataSel.length === 0) { alert("Không có dữ liệu phù hợp để xuất"); return; } const docsPayload = dataSel.map((d) => ({ code: d.code, date: d.date, time: d.time, warehouse: d.warehouse, createdBy: d.createdBy, receiver: d.receiver, description: d.description, lines: d.lines.map((l) => ({ product: l.product, code: l.code, unit: l.unit, qty: l.qty, memo: l.memo })) })); setDownloading(true); try { const payload: any = { docs: docsPayload }; const res = await fetch("/api/outbound/print-excel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); if (!res.ok) throw new Error(await res.text()); const blob = await res.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); const today = dateToStr(new Date()); a.href = url; a.download = `phieu-xuat-${today}.xlsx`; a.click(); URL.revokeObjectURL(url); } catch (e: any) { alert(e?.message || "Xuất Excel thất bại"); } finally { setDownloading(false); } }
+  async function printSelectedHtml() { if (selected.length !== 1) { alert("Vui lòng chọn đúng 1 phiếu để in"); return; } const d = docs.find(x => x.id === selected[0]); if (!d) { alert("Không tìm thấy phiếu đã chọn"); return; } try { const slugOrCode = d.slug || d.code; const url = `/print/outbound?code=${encodeURIComponent(slugOrCode)}`; window.open(url, "_blank"); } catch (e: any) { alert(e?.message || "Không mở được trang in"); } }
+  function normalizeDate(d: string) { const m = (d || "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (m) { const dd = m[1].padStart(2, "0"); const mm = m[2].padStart(2, "0"); const yyyy = m[3]; return `${yyyy}-${mm}-${dd}`; } return d || ""; }
+  function _formatDMY(dateStr: string) { const d = new Date(dateStr); const dd = String(d.getDate()).padStart(2, "0"); const mm = String(d.getMonth() + 1).padStart(2, "0"); const yy = d.getFullYear(); return `${dd}-${mm}-${yy}`; }
 
   return (
     <section className="space-y-4">
@@ -206,91 +360,72 @@ export default function OutboundPage() {
               <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-zinc-400">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               </span>
-              <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); setSelected([]); }} placeholder="Tìm theo số phiếu hoặc đơn vị nhận" className="w-full pl-9 pr-3 py-2 rounded-lg border border-zinc-200 bg-white/60 text-sm placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100" />
+              <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); setSelected([]); }} placeholder="Tìm theo số phiếu, diễn giải, người lập, ghi chú sản phẩm" className="w-full pl-9 pr-3 py-2 rounded-lg border border-zinc-200 bg-white/60 text-sm placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100" />
             </div>
           </div>
           <select value={warehouse} onChange={(e) => { setWarehouse(e.target.value); setPage(1); setSelected([]); }} className="rounded-lg border border-zinc-200 bg-white/60 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100">
             <option value="Tất cả">Tất cả kho</option>
-            {WAREHOUSES.map((w) => (<option key={w} value={w}>{w}</option>))}
-          </select>
-          <select value={status} onChange={(e) => { setStatus(e.target.value as Status | "Tất cả"); setPage(1); setSelected([]); }} className="rounded-lg border border-zinc-200 bg-white/60 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100">
-            <option value="Tất cả">Tất cả trạng thái</option>
-            {STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
+            {warehouses.map((w) => (<option key={(w.id || w.name)} value={w.name}>{w.name}</option>))}
           </select>
           <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); setSelected([]); }} className="rounded-lg border border-zinc-200 bg-white/60 px-3 py-2 text-sm dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100" />
           <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); setSelected([]); }} className="rounded-lg border border-zinc-200 bg-white/60 px-3 py-2 text-sm dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100" />
           <div className="lg:col-span-6 flex flex-wrap items-center gap-2 pt-1 justify-start lg:justify-end">
-            <button onClick={approveSelected} className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 text-sm dark:border-emerald-900/40 dark:text-emerald-300 dark:bg-emerald-900/10 dark:hover:bg-emerald-900/20">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
-              Duyệt phiếu
-            </button>
-            
-            <button onClick={printSelectedBrowser} disabled={selected.length !== 1} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
+            <button onClick={printSelectedHtml} disabled={selected.length !== 1 || downloading} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 6 3 18 3 18 9"/><rect x="6" y="13" width="12" height="8"/><line x1="6" y1="17" x2="6" y2="17"/></svg>
               In
             </button>
-            <button onClick={exportSelectedExcel} disabled={selected.length === 0} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
+            <button onClick={async () => {
+              if (selected.length !== 1) { alert('Vui lòng chọn đúng 1 phiếu để tải ảnh'); return; }
+              const d = docs.find(x => x.id === selected[0]); if (!d) { alert('Không tìm thấy phiếu đã chọn'); return; }
+              try {
+                setDownloading(true); const slugOrCode = d.slug || d.code;
+                const blob = await runConversionFetch(async (signal) => { const res = await fetch(`/api/outbound/print-image?slug=${encodeURIComponent(slugOrCode)}`, { signal }); const ct = res.headers.get('content-type') || ''; if (!res.ok) { let txt = await res.text(); try { const j = JSON.parse(txt); txt = j?.error || JSON.stringify(j); } catch {} throw new Error(`Server lỗi: ${res.status} ${txt}`); } if (ct.includes('application/json')) { const j = await res.json(); throw new Error(j?.error || 'Không nhận được ảnh (json returned)'); } if (!ct.includes('image')) { const txt = await res.text(); throw new Error('Không phải ảnh trả về: ' + txt.slice(0, 200)); } return await res.blob(); }, slugOrCode);
+                const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; const today = new Date(); const y = today.getFullYear(); const m = String(today.getMonth()+1).padStart(2,'0'); const dd = String(today.getDate()).padStart(2,'0'); a.download = `phieu-${(d.code||slugOrCode)}-${y}${m}${dd}.jpg`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+              } catch (e: any) { alert(e?.message || 'Tải ảnh thất bại'); } finally { setDownloading(false); }
+            }} disabled={selected.length !== 1 || downloading} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 7v10"/></svg>
+              Tải ảnh
+            </button>
+            <button onClick={exportSelectedExcel} disabled={selected.length === 0 || downloading} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 px-3 py-1.5 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Xuất Excel
+              {downloading ? 'Đang tải…' : 'Xuất Excel'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Table */}
       <div className="rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white/80 dark:bg-zinc-900/70 backdrop-blur ring-1 ring-black/5 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-zinc-50/70 dark:bg-zinc-800/50 text-zinc-500">
               <tr>
-                <th className="w-10 px-4 py-3">
-                  <input type="checkbox" className="rounded" onChange={toggleSelectAllPage} checked={items.length > 0 && items.every(i => selected.includes(i.id))} aria-label="Chọn tất cả" />
-                </th>
+                <th className="w-10 px-4 py-3"><input type="checkbox" className="rounded" onChange={toggleSelectAllPage} checked={items.length > 0 && items.every(i => selected.includes(i.id))} aria-label="Chọn tất cả" /></th>
                 <th className="text-left font-medium px-4 py-3">Số phiếu</th>
-                <th className="text-left font-medium px-4 py-3">Ngày</th>
-                <th className="text-left font-medium px-4 py-3">Đơn vị nhận</th>
-                <th className="text-left font-medium px-4 py-3">Kho</th>
-                <th className="text-right font-medium px-4 py-3">Số dòng</th>
-                <th className="text-right font-medium px-4 py-3">Số lượng</th>
-                <th className="text-left font-medium px-4 py-3">Trạng thái</th>
+                <th className="hidden sm:table-cell text-left font-medium px-4 py-3">Ngày</th>
+                <th className="hidden sm:table-cell text-left font-medium px-4 py-3">Người lập phiếu</th>
+                <th className="hidden sm:table-cell text-left font-medium px-4 py-3">Diễn giải</th>
                 <th className="text-right font-medium px-4 py-3">Hành động</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
+              {loading && (<tr><td colSpan={6} className="px-4 py-3 text-sm text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-900/20">Đang tải dữ liệu…</td></tr>)}
               {items.map((d) => (
                 <tr key={d.id} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-800/40">
-                  <td className="px-4 py-3">
-                    <input type="checkbox" className="rounded" checked={selected.includes(d.id)} onChange={() => toggleSelect(d.id)} aria-label={`Chọn ${d.code}`} />
-                  </td>
-                  <td className="px-4 py-3 text-zinc-900 dark:text-zinc-100">{d.code}</td>
-                  <td className="px-4 py-3">{d.date}</td>
-                  <td className="px-4 py-3">{d.partner}</td>
-                  <td className="px-4 py-3">{d.warehouse}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{d.items}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{d.quantity}</td>
-                  <td className="px-4 py-3">
-                    {d.status === "Đã duyệt" ? (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">Đã duyệt</span>
-                    ) : d.status === "Nháp" ? (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">Nháp</span>
-                    ) : (
-                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">Đã hủy</span>
-                    )}
-                  </td>
+                  <td className="px-4 py-3"><input type="checkbox" className="rounded" checked={selected.includes(d.id)} onChange={() => toggleSelect(d.id)} aria-label={`Chọn ${d.code}`} /></td>
+                  <td className="px-4 py-3 text-zinc-900 dark:text-zinc-100"><button onClick={() => setViewing(d)} className="text-emerald-700 hover:underline dark:text-emerald-300">{d.code}</button></td>
+                  <td className="hidden sm:table-cell px-4 py-3">{_formatDMY(d.date)}</td>
+                  <td className="hidden sm:table-cell px-4 py-3">{d.createdBy}</td>
+                  <td className="hidden sm:table-cell px-4 py-3">{d.description}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
-                      
-                      <button onClick={() => onEdit(d)} className="px-2 py-1 rounded-md text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-900/20">Sửa</button>
-                      <button onClick={() => onDelete(d)} className="px-2 py-1 rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20">Xóa</button>
+                      <button disabled={imagePreviewLoadingFor === (d.slug || d.code)} onClick={async () => { const slugOrCode = d.slug || d.code; try { setImagePreviewError(null); setImagePreviewLoadingFor(slugOrCode); const blob = await runConversionFetch(async (signal) => { const res = await fetch(`/api/outbound/print-image?slug=${encodeURIComponent(slugOrCode)}`, { signal }); if (!res.ok) { let txt = await res.text(); try { const j = JSON.parse(txt); txt = j?.error || JSON.stringify(j); } catch {} throw new Error(`Server lỗi: ${res.status} ${txt}`); } const ct = res.headers.get('content-type') || ''; if (!ct.includes('image')) { const txt = await res.text(); throw new Error('Không phải ảnh trả về: ' + txt.slice(0, 200)); } return await res.blob(); }, slugOrCode); const url = URL.createObjectURL(blob); if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); setImagePreviewUrl(url); } catch (e: any) { setImagePreviewError(e?.message || String(e)); } finally { setImagePreviewLoadingFor(null); } }} aria-label="Xem ảnh" title="Xem ảnh" className="px-2 py-1 rounded-md border border-zinc-200 hover:bg-zinc-50 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50">{imagePreviewLoadingFor === (d.slug || d.code) ? (<svg className="animate-spin text-emerald-600" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="10" strokeOpacity="0.2" /><path d="M22 12a10 10 0 0 1-10 10" /></svg>) : (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="3"/></svg>)}<span className="sr-only">Xem ảnh</span></button>
+                      <button aria-label="Sửa phiếu" title="Sửa" onClick={() => onEdit(d)} className="p-2 rounded-md hover:bg-zinc-50 dark:hover:bg-zinc-800"><svg className="w-4 h-4 text-emerald-700 dark:text-emerald-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+                      <button aria-label="Xóa phiếu" title="Xóa" onClick={() => onDelete(d)} className="p-2 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"><svg className="w-4 h-4 text-red-700 dark:text-red-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg></button>
                     </div>
                   </td>
                 </tr>
               ))}
-              {items.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">Không có dữ liệu phù hợp</td>
-                </tr>
-              )}
+              {!loading && items.length === 0 && (<tr><td colSpan={6} className="px-4 py-8 text-center text-zinc-500">Không có dữ liệu phù hợp</td></tr>)}
             </tbody>
           </table>
         </div>
@@ -303,11 +438,14 @@ export default function OutboundPage() {
         </div>
       </div>
 
-      {/* Modal Create/Edit */}
+      {downloading && (<div className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-none"><div className="absolute inset-0 bg-black/30" /><div className="relative z-50 pointer-events-auto bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-6 py-4 shadow-xl flex items-center gap-3"><svg className="animate-spin text-emerald-600" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity="0.2" /><path d="M22 12a10 10 0 0 1-10 10" /></svg><div className="text-sm font-medium">Đang tải tệp, vui lòng chờ…</div></div></div>)}
+      {imagePreviewUrl && (<div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto"><div className="absolute inset-0 bg-black/40" onClick={() => { try { if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); } catch {}; setImagePreviewUrl(null); setImagePreviewError(null); }} /><div className="relative w-full max-w-3xl mx-4 my-8 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white dark:bg-zinc-900 p-4 shadow-xl"><div className="flex items-center justify-between mb-2"><h3 className="text-lg font-medium">Xem ảnh</h3><button onClick={() => { try { if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); } catch {} setImagePreviewUrl(null); setImagePreviewError(null); }} className="text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">×</button></div><div className="text-sm text-zinc-500 mb-3">Hình ảnh chụp phiếu (nếu mất hoặc lỗi, thử tải lại)</div><div className="flex items-center justify-center"><img src={imagePreviewUrl} alt="Phiếu" className="max-h-[70vh] w-auto object-contain" /></div>{imagePreviewError && <div className="mt-2 text-sm text-red-600">Lỗi: {imagePreviewError}</div>}<div className="mt-4 text-right"><a href={imagePreviewUrl || '#'} download className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50 dark:border-zinc-700">Tải xuống</a></div></div></div>)}
+      {conversionVisible && (<div className="fixed inset-0 z-[70] flex items-center justify-center"><div className="absolute inset-0 bg-black/50" /><div className="relative z-50 w-full max-w-lg mx-4 rounded-xl bg-white dark:bg-zinc-900 p-6 border border-zinc-200 dark:border-zinc-800 shadow-xl text-center"><div className="flex items-center justify-center mb-3"><svg className="animate-spin w-6 h-6 text-emerald-600 mr-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity="0.2" /><path d="M22 12a10 10 0 0 1-10 10" /></svg><h3 className="text-lg font-medium">Đang chuyển đổi tệp thành hình ảnh</h3></div><div className="text-sm text-zinc-600 dark:text-zinc-300">Vui lòng chờ — tiến trình chuyển đổi đang diễn ra</div><div className="mt-3">{conversionProgress != null ? (<div className="w-full"><div className="w-full bg-zinc-100 dark:bg-zinc-800 rounded-full h-3 overflow-hidden"><div className="bg-emerald-500 h-3" style={{ width: `${conversionProgress}%` }} /></div><div className="mt-2 text-sm">Tiến trình: {conversionProgress}%</div></div>) : (<div className="text-2xl font-mono">{conversionCountdown}s</div>)}</div><div className="mt-4 text-sm text-zinc-500">(Hệ thống sẽ tự động tiếp tục khi hoàn tất)</div><div className="mt-4"><button onClick={() => { try { conversionAbortController?.abort(); } catch {} setConversionVisible(false); setConversionProgress(null); }} className="px-3 py-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-sm">Bỏ chờ</button></div></div></div>)}
+
       {showModal && editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto">
           <div className="absolute inset-0 bg-black/40" onClick={() => { setShowModal(false); setEditing(null); }} />
-          <div className="relative w-full max-w-3xl mx-4 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white dark:bg-zinc-900 p-5 md:p-6 shadow-xl">
+          <div className="relative w-full max-w-3xl mx-4 my-8 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white dark:bg-zinc-900 p-5 md:p-6 shadow-xl max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">{editing.id ? "Sửa phiếu xuất" : "Tạo phiếu xuất"}</h3>
               <button onClick={() => { setShowModal(false); setEditing(null); }} className="text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">×</button>
@@ -315,87 +453,194 @@ export default function OutboundPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm mb-1">Số phiếu</label>
-                <input value={editing.code} onChange={(e) => setEditing({ ...(editing as Doc), code: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+                <input value={editing.code} readOnly={editing.id === 0} onChange={(e) => setEditing({ ...(editing as Doc), code: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-200" />
               </div>
               <div>
                 <label className="block text-sm mb-1">Ngày</label>
-                <input type="date" value={editing.date} onChange={(e) => setEditing({ ...(editing as Doc), date: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+                <input type="date" value={editing.date} onChange={(e) => { const v = e.target.value; if ((editing as Doc).id === 0) { const newCode = computeNextOutboundCode(v, docs); setEditing({ ...(editing as Doc), date: v, code: newCode }); } else { setEditing({ ...(editing as Doc), date: v }); } }} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
               </div>
               <div>
                 <label className="block text-sm mb-1">Kho</label>
                 <select value={editing.warehouse} onChange={(e) => setEditing({ ...(editing as Doc), warehouse: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
-                  {WAREHOUSES.map((w) => (<option key={w} value={w}>{w}</option>))}
+                  <option value="">— Chọn kho —</option>
+                  {warehouses.map((w) => (<option key={(w.id || w.name)} value={w.name}>{w.name}</option>))}
                 </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-sm mb-1">Đơn vị nhận</label>
-                <input value={editing.partner} onChange={(e) => setEditing({ ...(editing as Doc), partner: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
               </div>
               <div>
-                <label className="block text-sm mb-1">Trạng thái</label>
-                <select value={editing.status} onChange={(e) => setEditing({ ...(editing as Doc), status: e.target.value as Status })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
-                  {STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
-                </select>
+                <label className="block text-sm mb-1">Người lập phiếu</label>
+                <input value={editing.createdBy ?? ""} readOnly className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-200" />
               </div>
-              <div className="lg:col-span-3">
-                <label className="block text-sm mb-1">Ghi chú</label>
-                <textarea value={editing.note ?? ""} onChange={(e) => setEditing({ ...(editing as Doc), note: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 min-h-[74px]" />
+              <div>
+                <label className="block text-sm mb-1">Người nhận</label>
+                {receiverOptions.length > 0 ? (
+                  <select value={editing.receiver ?? ""} onChange={(e) => setEditing({ ...(editing as Doc), receiver: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
+                    {editing.receiver && !receiverOptions.includes(editing.receiver) && (<option value={editing.receiver}>{editing.receiver}</option>)}
+                    <option value="">— Chọn người nhận —</option>
+                    {receiverOptions.map((opt) => (<option key={opt} value={opt}>{opt}</option>))}
+                  </select>
+                ) : (
+                  <input value={editing.receiver ?? ""} onChange={(e) => setEditing({ ...(editing as Doc), receiver: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" placeholder="Tên người nhận hàng" />
+                )}
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Nguồn dữ liệu</label>
+                <input value={editing.source ?? ""} onChange={(e) => setEditing({ ...(editing as Doc), source: e.target.value })} className="w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+              </div>
+              <div className="md:col-span-2 lg:col-span-3">
+                <label className="block text-sm mb-1">Diễn giải</label>
+                <textarea value={editing.description ?? ""} onChange={(e) => setEditing({ ...(editing as Doc), description: e.target.value })} className="w-full h-[40px] min-h-[40px] px-2 py-0 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 resize-none text-sm leading-[38px]" />
               </div>
             </div>
 
             <div className="mt-5">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-medium">Chi tiết hàng hóa</h4>
-                <button onClick={addLine} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-2 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  Thêm dòng
-                </button>
+              <div className="flex items-center justify-between mb-2"><h4 className="font-medium">Chi tiết hàng hóa</h4></div>
+              <div className="rounded-xl border-0 md:border border-zinc-200/70 dark:border-zinc-800/70 overflow-visible">
+                <div className="block md:hidden">
+                  {editing.lines.map((l, idx) => (
+                    <div key={l.id} className={`mb-2 rounded-xl px-3 py-3 border shadow-sm ${idx % 2 === 1 ? 'bg-emerald-50/80 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-900' : 'bg-sky-50/80 dark:bg-sky-900/30 border-sky-100 dark:border-sky-900'}`}>
+                      <div className="text-xs text-zinc-500 mb-1">Sản phẩm</div>
+                      <div className="relative">
+                        <input value={l.product} onFocus={(e) => { setOpenSuggestFor(l.id); try { const rect = (e.target as HTMLInputElement).getBoundingClientRect(); const spaceBelow = window.innerHeight - rect.bottom; setSuggestUp(spaceBelow < 280); setSuggestWidth(Math.ceil(rect.width)); } catch {} }} onBlur={() => setTimeout(() => setOpenSuggestFor((id) => (id === l.id ? null : id)), 150)} onChange={(e) => { const v = e.target.value; const next = { ...l, product: v } as Line; const m = v.match(/^([^\s-]+)\s*-\s*(.+)$/); if (m) { const code = m[1].trim(); const prod = products.find(p => p.code.toLowerCase() === code.toLowerCase()); next.code = code; const pref = (prod?.uomSmall || prod?.uomMedium || prod?.uomLarge || '').toString(); if (!next.unit && pref) next.unit = pref; } else { const byCode = products.find(p => p.code.toLowerCase() === v.trim().toLowerCase()); if (byCode) { next.code = byCode.code; const pref = (byCode.uomSmall || byCode.uomMedium || byCode.uomLarge || '').toString(); if (!next.unit && pref) next.unit = pref; } else { next.code = undefined; } } setOpenSuggestFor(l.id); setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? next : x) }); }} className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" placeholder="Tìm theo mã hoặc tên sản phẩm" inputMode="search" />
+                        {openSuggestFor === l.id && (
+                          <div className="absolute z-50 rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-800 max-h-96 overflow-auto whitespace-nowrap" style={{ ...(suggestUp ? { bottom: 'calc(100% + 4px)' } : { top: 'calc(100% + 4px)' }), minWidth: (suggestWidth ? Math.max(240, suggestWidth) : 240) + 'px', maxWidth: 'calc(100vw - 48px)', left: 0, right: 'auto' }}>
+                            {(() => { const list = filterProducts(l.product, 8); if (!list.length) return (<div className="px-3 py-2 text-sm text-zinc-500">Không có kết quả</div>); return (<ul className="py-1 text-sm">{list.map((p, i2) => (<li key={`${p.code}-${i2}`} className="px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-700 cursor-pointer leading-6" onMouseDown={(e) => { e.preventDefault(); const pref = (p.uomSmall || p.uomMedium || p.uomLarge || '').toString(); const next: Line = { ...l, product: `${p.code} - ${p.name}`, code: p.code, unit: l.unit || pref || '' }; setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? next : x) }); setOpenSuggestFor(null); }} onTouchStart={(e) => { e.preventDefault(); const pref = (p.uomSmall || p.uomMedium || p.uomLarge || '').toString(); const next: Line = { ...l, product: `${p.code} - ${p.name}`, code: p.code, unit: l.unit || pref || '' }; setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? next : x) }); setOpenSuggestFor(null); }}><div className="font-medium text-zinc-900 dark:text-zinc-100">{p.code} — {p.name}</div></li>))}</ul>); })()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div>
+                          <div className="text-xs text-zinc-500 mb-1">Đơn vị</div>
+                          <select value={l.unit} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, unit: e.target.value } : x) })} className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
+                            <option value="">— Chọn đơn vị —</option>
+                            {getUnitsForLine(l).map((u) => (<option key={u} value={u}>{u}</option>))}
+                          </select>
+                        </div>
+                        <div>
+                          <div className="text-xs text-zinc-500 mb-1">Số lượng</div>
+                          <input type="number" min={0} value={l.qty} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, qty: Number(e.target.value) } : x) })} className="w-full text-right px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+                        </div>
+                      </div>
+                      <div className="mt-2">
+                        <div className="text-xs text-zinc-500 mb-1">Ghi chú</div>
+                        <input value={l.memo ?? ''} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, memo: e.target.value } : x) })} className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
+                      </div>
+                      <div className="mt-2 text-right"><button onClick={() => removeLine(l.id)} className="inline-flex px-2 py-1 rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20">Xóa</button></div>
+                    </div>
+                  ))}
+                  {editing.lines.length === 0 && (<div className="px-3 py-6 text-center text-zinc-500">Chưa có dòng hàng hóa</div>)}
+                </div>
+
+                <div className="hidden md:block overflow-visible">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-zinc-50/70 dark:bg-zinc-800/50 text-zinc-500">
+                      <tr>
+                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">Sản Phẩm</th>
+                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">Đơn Vị Tính</th>
+                        <th className="text-right font-medium px-3 py-2 whitespace-nowrap">Số Lượng</th>
+                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">Ghi Chú</th>
+                        
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
+                      {editing.lines.map((l, idx) => (
+                        <tr key={l.id} className={idx % 2 === 1 ? 'bg-emerald-50/60 dark:bg-emerald-900/30' : 'bg-sky-50/60 dark:bg-sky-900/30'}>
+                          <td className="px-3 py-2">
+                            <div className="relative">
+                              <input value={l.product} onFocus={(e) => { setOpenSuggestFor(l.id); try { const rect = (e.target as HTMLInputElement).getBoundingClientRect(); const spaceBelow = window.innerHeight - rect.bottom; setSuggestUp(spaceBelow < 280); setSuggestWidth(Math.ceil(rect.width)); } catch {} }} onBlur={() => setTimeout(() => setOpenSuggestFor((id) => (id === l.id ? null : id)), 150)} onChange={(e) => { const v = e.target.value; const next = { ...l, product: v } as Line; const m = v.match(/^([^\s-]+)\s*-\s*(.+)$/); if (m) { const code = m[1].trim(); const prod = products.find(p => p.code.toLowerCase() === code.toLowerCase()); next.code = code; const pref = (prod?.uomSmall || prod?.uomMedium || prod?.uomLarge || "").toString(); if (!next.unit && pref) next.unit = pref; } else { const byCode = products.find(p => p.code.toLowerCase() === v.trim().toLowerCase()); if (byCode) { next.code = byCode.code; const pref = (byCode.uomSmall || byCode.uomMedium || byCode.uomLarge || "").toString(); if (!next.unit && pref) next.unit = pref; } else { next.code = undefined; } } setOpenSuggestFor(l.id); setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? next : x) }); }} className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" placeholder="Tìm theo mã hoặc tên sản phẩm" />
+                              {openSuggestFor === l.id && (
+                                <div className="absolute z-50 rounded-md border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-800 max-h-96 overflow-auto whitespace-nowrap" style={{ ...(suggestUp ? { bottom: 'calc(100% + 4px)' } : { top: 'calc(100% + 4px)' }), minWidth: (suggestWidth ? Math.max(240, suggestWidth) : 240) + 'px', maxWidth: 'calc(100vw - 48px)', left: 0, right: 'auto' }}>
+                                  {(() => { const list = filterProducts(l.product, 8); if (!list.length) return (<div className="px-3 py-2 text-sm text-zinc-500">Không có kết quả</div>); return (<ul className="py-1 text-sm">{list.map((p, idx2) => (<li key={`${p.code}-${idx2}`} className="px-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-700 cursor-pointer leading-6" onMouseDown={(e) => { e.preventDefault(); const pref = (p.uomSmall || p.uomMedium || p.uomLarge || "").toString(); const next: Line = { ...l, product: `${p.code} - ${p.name}`, code: p.code, unit: l.unit || pref || "", }; setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? next : x) }); setOpenSuggestFor(null); }} onTouchStart={(e) => { e.preventDefault(); const pref = (p.uomSmall || p.uomMedium || p.uomLarge || "").toString(); const next: Line = { ...l, product: `${p.code} - ${p.name}`, code: p.code, unit: l.unit || pref || "" }; setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? next : x) }); setOpenSuggestFor(null); }}><div className="font-medium text-zinc-900 dark:text-zinc-100">{p.code} — {p.name}</div></li>))}</ul>); })()}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2">
+                            <select value={l.unit} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, unit: e.target.value } : x) })} className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
+                              <option value="">— Chọn đơn vị —</option>
+                              {getUnitsForLine(l).map((u) => (<option key={u} value={u}>{u}</option>))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2 text-right"><input type="number" min={0} value={l.qty} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, qty: Number(e.target.value) } : x) })} className="w-28 text-right px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" /></td>
+                          <td className="px-3 py-2"><input value={l.memo ?? ""} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, memo: e.target.value } : x) })} className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" /></td>
+                          <td className="px-3 py-2 text-right"><button onClick={() => removeLine(l.id)} className="px-2 py-1 rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20">Xóa</button></td>
+                        </tr>
+                      ))}
+                      {editing.lines.length === 0 && (<tr><td colSpan={5} className="px-3 py-6 text-center text-zinc-500">Chưa có dòng hàng hóa</td></tr>)}
+                    </tbody>
+                  </table>
+                </div>
               </div>
+              <div className="mt-3 text-center"><button onClick={addLine} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Thêm dòng</button></div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button onClick={() => { setShowModal(false); setEditing(null); }} className="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800">Hủy</button>
+              <button onClick={saveDoc} disabled={saving} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60">{saving ? "Đang lưu..." : "Lưu"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewing && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setViewing(null)} />
+          <div ref={modalRef} className="relative w-full max-w-3xl mx-4 my-8 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white dark:bg-zinc-900 p-5 md:p-6 shadow-xl max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Phiếu xuất • {viewing.code}</h3>
+              <button onClick={() => setViewing(null)} className="hidden md:inline text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">×</button>
+            </div>
+            <button onClick={() => setViewing(null)} aria-label="Đóng" className="md:hidden fixed top-4 right-3 z-60 w-10 h-10 flex items-center justify-center rounded-full bg-white/90 dark:bg-zinc-900/90 text-zinc-800 dark:text-zinc-100 shadow-md border border-zinc-200 dark:border-zinc-800"><span className="text-xl leading-none">×</span></button>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div><div className="text-sm text-zinc-500">Số phiếu</div><div className="font-medium">{viewing.code}</div></div>
+              <div><div className="text-sm text-zinc-500">Ngày</div><div className="font-medium">{_formatDMY(viewing.date)}</div></div>
+              <div><div className="text-sm text-zinc-500">Giờ</div><div className="font-medium">{viewing.time || ""}</div></div>
+              <div><div className="text-sm text-zinc-500">Kho</div><div className="font-medium">{viewing.warehouse}</div></div>
+              <div><div className="text-sm text-zinc-500">Người lập phiếu</div><div className="font-medium">{viewing.createdBy || ""}</div></div>
+              <div><div className="text-sm text-zinc-500">Người nhận</div><div className="font-medium">{viewing.receiver || ""}</div></div>
+              <div className="md:col-span-2 lg:col-span-3"><div className="text-sm text-zinc-500">Diễn giải</div><div className="font-medium whitespace-pre-line">{viewing.description || ""}</div></div>
+              <div><div className="text-sm text-zinc-500">Nguồn</div><div className="font-medium whitespace-pre-line">{viewing.source || ""}</div></div>
+            </div>
+
+            {tooltipInfo && (<div ref={tooltipRef} className="absolute z-60 px-3 py-2 rounded-md bg-black text-white text-sm pointer-events-none whitespace-normal break-words max-w-[90vw] md:max-w-[520px]" style={(() => { if (tooltipInfo.placement === 'right') { return { left: `${tooltipInfo.left}px`, top: `${tooltipTopPx !== null ? tooltipTopPx : tooltipInfo.top}px`, transform: 'translateY(0%)', translate: '0', transformOrigin: 'left center', } as React.CSSProperties; } return { left: tooltipLeftPx !== null ? `${tooltipLeftPx}px` : `${tooltipInfo.left}px`, top: `${tooltipInfo.top}px`, transform: tooltipLeftPx !== null ? 'translateY(-100%)' : 'translateX(-50%) translateY(-100%)', } as React.CSSProperties; })()}>{tooltipInfo.text}</div>)}
+
+            <div className="mt-5">
+              <h4 className="font-medium mb-2">Chi tiết hàng hóa</h4>
               <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead className="bg-zinc-50/70 dark:bg-zinc-800/50 text-zinc-500">
                       <tr>
-                        <th className="text-left font-medium px-3 py-2">Sản phẩm</th>
-                        <th className="text-left font-medium px-3 py-2">Đơn vị</th>
-                        <th className="text-right font-medium px-3 py-2">Số lượng</th>
-                        <th className="text-right font-medium px-3 py-2">Hành động</th>
+                        <th className="text-left font-medium px-3 py-2">#</th>
+                        <th className="text-left font-medium px-3 py-2">SP</th>
+                        <th className="text-left font-medium px-3 py-2">ĐVT</th>
+                        <th className="text-right font-medium px-3 py-2">SL</th>
+                        <th className="text-left font-medium px-3 py-2">note</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
-                      {editing.lines.map((l) => (
+                      {viewing.lines.map((l, idx) => { const prodStr = (l.product || '').toString(); const codeOnly = prodStr.split(' - ')[0]; return (
                         <tr key={l.id}>
-                          <td className="px-3 py-2">
-                            <input value={l.product} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, product: e.target.value } : x) })} className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" placeholder="Mã/Tên sản phẩm" />
-                          </td>
-                          <td className="px-3 py-2">
-                            <select value={l.unit} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, unit: e.target.value } : x) })} className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800">
-                              {UNITS.map((u) => (<option key={u} value={u}>{u}</option>))}
-                            </select>
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <input type="number" min={0} value={l.qty} onChange={(e) => setEditing({ ...(editing as Doc), lines: editing.lines.map(x => x.id === l.id ? { ...x, qty: Number(e.target.value) } : x) })} className="w-28 text-right px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800" />
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <button onClick={() => removeLine(l.id)} className="px-2 py-1 rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20">Xóa</button>
-                          </td>
+                          <td className="px-3 py-2">{idx + 1}</td>
+                          <td className="px-3 py-2"><span className="sm:hidden"><span className="cursor-help" onMouseEnter={(e) => showTooltip(e, prodStr)} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, prodStr)} onTouchEnd={handleTouchEnd}>{codeOnly}</span></span><span className="hidden sm:inline"><span className="cursor-help" onMouseEnter={(e) => showTooltip(e, prodStr)} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, prodStr)} onTouchEnd={handleTouchEnd}>{prodStr}</span></span></td>
+                          <td className="px-3 py-2">{l.unit}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{l.qty}</td>
+                          <td className="px-3 py-2"><span className="sm:hidden">{(l.memo || '').toString().trim() ? (<button type="button" className="text-emerald-600 underline text-sm flex items-center gap-1" aria-label="Xem ghi chú" onMouseEnter={(e) => showTooltip(e, (l.memo || '').toString(), 'left')} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, (l.memo || '').toString(), 'left')} onTouchEnd={handleTouchEnd}><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></button>) : (<span className="text-zinc-700 text-sm">—</span>)}</span><span className="hidden sm:inline">{l.memo || ""}</span></td>
                         </tr>
-                      ))}
-                      {editing.lines.length === 0 && (
-                        <tr>
-                          <td colSpan={4} className="px-3 py-6 text-center text-zinc-500">Chưa có dòng hàng hóa</td>
-                        </tr>
-                      )}
+                      ); })}
+                      {viewing.lines.length === 0 && (<tr><td colSpan={5} className="px-3 py-6 text-center text-zinc-500">Không có dòng hàng hóa</td></tr>)}
                     </tbody>
                   </table>
                 </div>
               </div>
             </div>
 
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button onClick={() => { setShowModal(false); setEditing(null); }} className="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800">Hủy</button>
-              <button onClick={saveDoc} className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Lưu</button>
-            </div>
+            <div className="mt-6 mb-4 mr-auto">{(() => { const kg = viewing.lines.reduce((sum, l) => { const v = qtyToKg(l); return sum + (v && Number.isFinite(v) ? v : 0); }, 0); const show = Number.isFinite(kg) ? kg : 0; return (<div className="inline-flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-200"><div className="font-medium">Tổng dòng: <span className="ml-1">{viewing.items}</span></div><div className="text-zinc-600 dark:text-zinc-300">•</div><div className="">Tổng SL (kg): <strong className="ml-1">{show.toLocaleString(undefined, { maximumFractionDigits: 3 })}</strong></div></div>); })()}</div>
+
+            <div className="mt-6 space-y-4"><div><LogsSection code={viewing.code} slug={viewing.slug} /></div><div><VersionsSection code={viewing.code} slug={viewing.slug} onPreview={(snap, ver) => { try { setPreviewSnapshot(snap || null); setPreviewVersion(typeof ver === 'number' ? ver : null); } catch { setPreviewSnapshot(null); setPreviewVersion(null); } }} /></div></div>
+
+            {previewSnapshot && (<div className="mt-4 rounded-xl border border-amber-200/80 bg-amber-50/40 p-3 text-sm"><div className="flex items-center justify-between mb-2"><div className="font-medium">Xem phiên bản {previewVersion ? `• v${previewVersion}` : ''}</div><button onClick={() => { setPreviewSnapshot(null); setPreviewVersion(null); }} className="text-sm text-zinc-600">Đóng</button></div><div className="text-xs text-zinc-500 mb-2">Dữ liệu xem trước — có thể khác với phiên bản hiện tại</div><div className="space-y-3 text-sm">{(() => { try { const s = previewSnapshot || {}; const pdoc: any = { code: s.code || s.doc?.code || (s.docs?.[0]?.code) || viewing.code, date: s.date || s.doc?.date || s.docs?.[0]?.date || viewing.date, time: s.time || s.doc?.time || viewing.time, warehouse: s.warehouse || s.doc?.warehouse || viewing.warehouse, createdBy: s.createdBy || s.doc?.createdBy || viewing.createdBy, receiver: s.receiver || s.doc?.receiver || viewing.receiver, description: s.description || s.doc?.description || viewing.description, lines: Array.isArray(s.lines) ? s.lines : (Array.isArray(s.doc?.lines) ? s.doc.lines : (Array.isArray(s.docs?.[0]?.lines) ? s.docs[0].lines : viewing.lines)), }; return (<div><div className="grid grid-cols-1 md:grid-cols-3 gap-2"><div><div className="text-xs text-zinc-500">Số phiếu</div><div className="font-medium">{pdoc.code}{previewVersion ? `-v${previewVersion}` : ''}</div></div><div><div className="text-xs text-zinc-500">Ngày</div><div className="font-medium">{pdoc.date}</div></div><div><div className="text-xs text-zinc-500">Kho</div><div className="font-medium">{pdoc.warehouse}</div></div></div><div className="mt-2"><div className="text-xs text-zinc-500">Diễn giải</div><div className="font-medium whitespace-pre-line">{pdoc.description || ''}</div></div><div className="mt-2"><div className="text-xs text-zinc-500 mb-1">Chi tiết hàng hóa</div><div className="rounded-xl border border-zinc-200 p-2 bg-white"><table className="min-w-full text-sm"><thead className="text-zinc-500 text-xs"><tr><th className="text-left px-2">#</th><th className="text-left px-2">Sản phẩm</th><th className="text-left px-2">ĐVT</th><th className="text-right px-2">SL</th><th className="text-right px-2">note</th></tr></thead><tbody>{((pdoc.lines || []) as any[]).map((l: any, i: number) => { const prodStr = (l.product || l.productName || `${l.productCode || ''} - ${l.productName || ''}`).toString(); return (<tr key={i} className="border-t"><td className="px-2 py-1">{i+1}</td><td className="px-2 py-1">{prodStr}</td><td className="px-2 py-1">{l.unit || ''}</td><td className="px-2 py-1 text-right">{l.qty ?? l.quantity ?? ''}</td><td className="px-2 py-1">{l.memo || l.note || ''}</td></tr>); })}</tbody></table></div></div></div>); } catch { return <pre className="text-xs">{String(previewSnapshot)}</pre>; } })()}</div></div>)}
+
+            <div className="mt-5 flex items-center justify-end gap-2"><button onClick={() => setViewing(null)} className="px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800">Đóng</button></div>
           </div>
         </div>
       )}

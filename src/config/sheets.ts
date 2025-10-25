@@ -30,6 +30,16 @@ export const LINK_PHIEUNHAP_SHEET_RANGE = "linkphieunhap!A1:B";
 // Versions sheet for inbound snapshots: columns A=code, B=version, C=timestamp, D=user, E=data(json), F=slug (link)
 export const INBOUND_VERSIONS_SHEET_RANGE = "phieunhap_versions!A1:F";
 
+// Phiếu xuất: cấu trúc tương tự phiếu nhập nhưng dùng các sheet/tab khác
+// A=mã phiếu, B=ngày, C=giờ, D=kho, E=Mã SP, F=Tên SP, G=số lượng, H=ĐVT, I=người lập, J=diễn giải, K=ghi chú, L=nguồn dữ liệu, M=người nhận, N=link (slug)
+export const OUTBOUND_SHEET_RANGE = "phieuxuat!A1:N";
+// Log sheet cho phiếu xuất
+export const OUTBOUND_LOG_SHEET_RANGE = "phieuxuat_log!A1:F";
+// Link mapping sheet cho phiếu xuất
+export const LINK_PHIEUXUAT_SHEET_RANGE = "linkphieuxuat!A1:B";
+// Versions sheet cho phiếu xuất
+export const OUTBOUND_VERSIONS_SHEET_RANGE = "phieuxuat_versions!A1:F";
+
 // Kho: danh mục kho
 // Sheet/tab tên 'kho' với cột: A=ID (không dùng), B=Name, C=Default(1/0)
 export const WAREHOUSES_SHEET_RANGE = "kho!A1:C";
