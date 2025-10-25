@@ -327,6 +327,7 @@ function InboundContent() {
     if (printLink && !qrDataUrl) return;
     // Do not auto-print when opened as a preview (preview=1 in query string)
     try {
+      const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
       const search = typeof window !== 'undefined' ? window.location.search : '';
       const params = new URLSearchParams(search);
       // Keep existing preview behavior. Additionally, support a separate `snapshot=1`
@@ -335,7 +336,9 @@ function InboundContent() {
       // in the UI (so TEXT7 and other preview-only UI remain as before).
       const isPreview = params.get('preview') === '1';
       const isSnapshot = params.get('snapshot') === '1';
-      if (isPreview || isSnapshot) return;
+      // Treat pretty URL /xhd/:slug as preview mode as well (do not auto-print when landing on /xhd/...)
+      const isXhdPath = pathname.startsWith('/xhd/');
+      if (isPreview || isSnapshot || isXhdPath) return;
     } catch {}
     const t = setTimeout(() => { try { window.print(); setPrinted(true); } catch {} }, 150);
     return () => clearTimeout(t);
