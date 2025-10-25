@@ -235,6 +235,8 @@ export default function InboundPage() {
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const [tooltipLeftPx, setTooltipLeftPx] = useState<number | null>(null);
   const [tooltipTopPx, setTooltipTopPx] = useState<number | null>(null);
+  const [tooltipPinned, setTooltipPinned] = useState(false); // true when triggered by touch and should persist until user dismisses
+  const lastTriggerRef = useRef<HTMLElement | null>(null);
   const touchTimer = useRef<number | null>(null);
 
   function showTooltipAt(target: HTMLElement, text: string, placement: 'top' | 'right' | 'left' = 'top') {
@@ -247,7 +249,7 @@ export default function InboundPage() {
       const rect = target.getBoundingClientRect();
       // account for modal scroll (so tooltip follows visible content)
       const scrollTop = (modalRef.current as HTMLElement).scrollTop || 0;
-      if (placement === 'top') {
+  if (placement === 'top') {
         // center X relative to modal
         let centerX = rect.left - modalRect.left + rect.width / 2;
         // position slightly above the element, accounting for modal scroll
@@ -256,7 +258,7 @@ export default function InboundPage() {
         const minX = 12;
         const maxX = Math.max(12, modalRect.width - 12);
         centerX = Math.max(minX, Math.min(maxX, centerX));
-        setTooltipInfo({ text, left: Math.round(centerX), top: Math.round(top), placement: 'top' });
+  setTooltipInfo({ text, left: Math.round(centerX), top: Math.round(top), placement: 'top' });
         // reset measured values so useLayoutEffect will compute proper clamped position
         setTooltipLeftPx(null);
         setTooltipTopPx(null);
@@ -265,7 +267,7 @@ export default function InboundPage() {
         const left = rect.right - modalRect.left + 8; // small gap
         // center Y relative to modal + scroll
         const centerY = rect.top - modalRect.top + scrollTop + rect.height / 2;
-        setTooltipInfo({ text, left: Math.round(left), top: Math.round(centerY), placement: 'right' });
+  setTooltipInfo({ text, left: Math.round(left), top: Math.round(centerY), placement: 'right' });
         setTooltipLeftPx(null);
         setTooltipTopPx(null);
       } else {
@@ -302,7 +304,13 @@ export default function InboundPage() {
     const tgt = (e.currentTarget ?? e.target) as HTMLElement;
     // long-press threshold ~500ms
     touchTimer.current = window.setTimeout(() => {
-      if (tgt) showTooltipAt(tgt, text, placement);
+      if (tgt) {
+        // remember trigger element so we can detect outside taps
+        lastTriggerRef.current = tgt;
+        showTooltipAt(tgt, text, placement);
+        // mark pinned so tooltip persists until explicit dismiss
+        setTooltipPinned(true);
+      }
       touchTimer.current = null;
     }, 500) as unknown as number;
   }
@@ -312,10 +320,7 @@ export default function InboundPage() {
       window.clearTimeout(touchTimer.current);
       touchTimer.current = null;
     }
-    // keep tooltip visible briefly after touchend
-    if (tooltipInfo) {
-      window.setTimeout(() => setTooltipInfo(null), 2200);
-    }
+    // do not auto-hide here; pinned tooltips are dismissed by outside tap or explicit hide
   }
 
   useEffect(() => {
@@ -323,6 +328,32 @@ export default function InboundPage() {
       if (touchTimer.current) window.clearTimeout(touchTimer.current);
     };
   }, []);
+
+  // When tooltip is pinned (from touch), listen for outside interactions to dismiss it
+  useEffect(() => {
+    if (!tooltipPinned) return;
+    function onPointerDown(ev: PointerEvent) {
+      try {
+        const t = ev.target as Node | null;
+        const isInTooltip = tooltipRef.current && t && tooltipRef.current.contains(t);
+        const isInTrigger = lastTriggerRef.current && t && lastTriggerRef.current.contains(t);
+        if (!isInTooltip && !isInTrigger) {
+          hideTooltip();
+        }
+      } catch {
+        hideTooltip();
+      }
+    }
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === 'Escape') hideTooltip();
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [tooltipPinned]);
 
   // After tooltip renders, measure its width and clamp horizontal position to stay within modal bounds
   useLayoutEffect(() => {
