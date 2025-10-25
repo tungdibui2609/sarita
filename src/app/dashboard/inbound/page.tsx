@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, useRef } from "react";
 import { exportInboundExcel, type ExcelDoc } from "@/lib/excelExport";
 
 type Line = { id: number; product: string; unit: string; qty: number; code?: string; memo?: string };
@@ -231,10 +231,13 @@ export default function InboundPage() {
 
   // Tooltip for viewing modal (small, localized; supports hover + long-press on mobile)
   const modalRef = useRef<HTMLDivElement | null>(null);
-  const [tooltipInfo, setTooltipInfo] = useState<{ text: string; left: number; top: number } | null>(null);
+  const [tooltipInfo, setTooltipInfo] = useState<{ text: string; left: number; top: number; placement?: 'top' | 'right' | 'left' } | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const [tooltipLeftPx, setTooltipLeftPx] = useState<number | null>(null);
+  const [tooltipTopPx, setTooltipTopPx] = useState<number | null>(null);
   const touchTimer = useRef<number | null>(null);
 
-  function showTooltipAt(target: HTMLElement, text: string) {
+  function showTooltipAt(target: HTMLElement, text: string, placement: 'top' | 'right' | 'left' = 'top') {
     if (!modalRef.current) {
       setTooltipInfo(null);
       return;
@@ -242,18 +245,47 @@ export default function InboundPage() {
     try {
       const modalRect = modalRef.current.getBoundingClientRect();
       const rect = target.getBoundingClientRect();
-      const left = rect.left - modalRect.left + rect.width / 2;
-      const top = rect.top - modalRect.top;
-      setTooltipInfo({ text, left, top });
+      // account for modal scroll (so tooltip follows visible content)
+      const scrollTop = (modalRef.current as HTMLElement).scrollTop || 0;
+      if (placement === 'top') {
+        // center X relative to modal
+        let centerX = rect.left - modalRect.left + rect.width / 2;
+        // position slightly above the element, accounting for modal scroll
+        const top = rect.top - modalRect.top + scrollTop - 8;
+        // clamp centerX within modal bounds (leave 12px padding)
+        const minX = 12;
+        const maxX = Math.max(12, modalRect.width - 12);
+        centerX = Math.max(minX, Math.min(maxX, centerX));
+        setTooltipInfo({ text, left: Math.round(centerX), top: Math.round(top), placement: 'top' });
+        // reset measured values so useLayoutEffect will compute proper clamped position
+        setTooltipLeftPx(null);
+        setTooltipTopPx(null);
+      } else if (placement === 'right') {
+        // placement === 'right': position to the right of the element
+        const left = rect.right - modalRect.left + 8; // small gap
+        // center Y relative to modal + scroll
+        const centerY = rect.top - modalRect.top + scrollTop + rect.height / 2;
+        setTooltipInfo({ text, left: Math.round(left), top: Math.round(centerY), placement: 'right' });
+        setTooltipLeftPx(null);
+        setTooltipTopPx(null);
+      } else {
+        // placement === 'left': position to the left of the element (we store the right-edge coordinate)
+        const rightEdge = rect.left - modalRect.left - 8; // gap from element
+        const centerY = rect.top - modalRect.top + scrollTop + rect.height / 2;
+        // tooltipInfo.left will carry the right-edge x relative to modal; we'll subtract tooltip width later
+        setTooltipInfo({ text, left: Math.round(rightEdge), top: Math.round(centerY), placement: 'left' });
+        setTooltipLeftPx(null);
+        setTooltipTopPx(null);
+      }
     } catch {
       setTooltipInfo(null);
     }
   }
 
-  function showTooltip(e: any, text: string) {
+  function showTooltip(e: any, text: string, placement: 'top' | 'right' | 'left' = 'top') {
     try {
       const tgt = (e.currentTarget ?? e.target) as HTMLElement;
-      if (tgt) showTooltipAt(tgt, text);
+      if (tgt) showTooltipAt(tgt, text, placement);
     } catch { /* ignore */ }
   }
 
@@ -265,12 +297,12 @@ export default function InboundPage() {
     }
   }
 
-  function handleTouchStart(e: any, text: string) {
+  function handleTouchStart(e: any, text: string, placement: 'top' | 'right' | 'left' = 'top') {
     if (touchTimer.current) window.clearTimeout(touchTimer.current);
     const tgt = (e.currentTarget ?? e.target) as HTMLElement;
     // long-press threshold ~500ms
     touchTimer.current = window.setTimeout(() => {
-      if (tgt) showTooltipAt(tgt, text);
+      if (tgt) showTooltipAt(tgt, text, placement);
       touchTimer.current = null;
     }, 500) as unknown as number;
   }
@@ -291,6 +323,55 @@ export default function InboundPage() {
       if (touchTimer.current) window.clearTimeout(touchTimer.current);
     };
   }, []);
+
+  // After tooltip renders, measure its width and clamp horizontal position to stay within modal bounds
+  useLayoutEffect(() => {
+    if (!tooltipInfo) {
+      setTooltipLeftPx(null);
+      return;
+    }
+    if (!tooltipRef.current || !modalRef.current) return;
+    try {
+      const modalRect = modalRef.current.getBoundingClientRect();
+      const ttRect = tooltipRef.current.getBoundingClientRect();
+      const tooltipWidth = ttRect.width;
+      if (tooltipInfo.placement === 'right') {
+        // measure height and clamp vertical position
+        const tooltipHeight = ttRect.height;
+        // tooltipInfo.top is centerY relative to modal
+        let desiredTop = tooltipInfo.top - tooltipHeight / 2;
+        const minTop = 12;
+        const maxTop = Math.max(12, modalRect.height - tooltipHeight - 12);
+        desiredTop = Math.max(minTop, Math.min(maxTop, desiredTop));
+        setTooltipTopPx(Math.round(desiredTop));
+      } else if (tooltipInfo.placement === 'left') {
+        // placement left: tooltipInfo.left is right-edge x relative to modal
+        const tooltipHeight = ttRect.height;
+        // vertically center and clamp
+        let desiredTop = tooltipInfo.top - tooltipHeight / 2;
+        const minTop = 12;
+        const maxTop = Math.max(12, modalRect.height - tooltipHeight - 12);
+        desiredTop = Math.max(minTop, Math.min(maxTop, desiredTop));
+        // compute left as rightEdge - tooltipWidth
+        const tooltipWidth = ttRect.width;
+        let desiredLeft = tooltipInfo.left - tooltipWidth;
+        const minLeft = 12;
+        const maxLeft = Math.max(12, modalRect.width - tooltipWidth - 12);
+        desiredLeft = Math.max(minLeft, Math.min(maxLeft, desiredLeft));
+        setTooltipTopPx(Math.round(desiredTop));
+        setTooltipLeftPx(Math.round(desiredLeft));
+      } else {
+        // tooltipInfo.left is center X relative to modal
+        let desired = tooltipInfo.left - tooltipWidth / 2;
+        const min = 12;
+        const max = Math.max(12, modalRect.width - tooltipWidth - 12);
+        desired = Math.max(min, Math.min(max, desired));
+        setTooltipLeftPx(Math.round(desired));
+      }
+    } catch {
+      // ignore measurement errors
+    }
+  }, [tooltipInfo]);
 
   // Run a fetch while showing a minimum conversion countdown (15s). The overlay
   // will be visible until both the fetch resolves (success or error) and the
@@ -1657,7 +1738,26 @@ export default function InboundPage() {
 
             {/* Tooltip rendered relative to modal (hover on desktop, long-press on mobile) */}
             {tooltipInfo && (
-              <div className="absolute z-60 px-3 py-1 rounded bg-black text-white text-sm pointer-events-none" style={{ left: `${tooltipInfo.left}px`, top: `${tooltipInfo.top - 8}px`, transform: 'translateX(-50%) translateY(-100%)' }}>
+              <div
+                ref={tooltipRef}
+                className="absolute z-60 px-3 py-2 rounded-md bg-black text-white text-sm pointer-events-none whitespace-normal break-words max-w-[90vw] md:max-w-[520px]"
+                style={(() => {
+                  if (tooltipInfo.placement === 'right') {
+                    return {
+                      left: `${tooltipInfo.left}px`,
+                      top: `${tooltipTopPx !== null ? tooltipTopPx : tooltipInfo.top}px`,
+                      transform: 'translateY(0%)',
+                      translate: '0',
+                      transformOrigin: 'left center',
+                    } as React.CSSProperties;
+                  }
+                  return {
+                    left: tooltipLeftPx !== null ? `${tooltipLeftPx}px` : `${tooltipInfo.left}px`,
+                    top: `${tooltipInfo.top}px`,
+                    transform: tooltipLeftPx !== null ? 'translateY(-100%)' : 'translateX(-50%) translateY(-100%)',
+                  } as React.CSSProperties;
+                })()}
+              >
                 {tooltipInfo.text}
               </div>
             )}
@@ -1694,7 +1794,18 @@ export default function InboundPage() {
                           </td>
                           <td className="px-3 py-2">{l.unit}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{l.qty}</td>
-                          <td className="px-3 py-2">{l.memo || ""}</td>
+                          <td className="px-3 py-2">
+                            <span className="sm:hidden">
+                              {(l.memo || '').toString().trim() ? (
+                                <button type="button" className="text-emerald-600 underline text-sm flex items-center gap-1" aria-label="Xem ghi chú" onMouseEnter={(e) => showTooltip(e, (l.memo || '').toString(), 'left')} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, (l.memo || '').toString(), 'left')} onTouchEnd={handleTouchEnd}>
+                                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                                </button>
+                              ) : (
+                                <span className="text-zinc-700 text-sm">—</span>
+                              )}
+                            </span>
+                            <span className="hidden sm:inline">{l.memo || ""}</span>
+                          </td>
                         </tr>
                       )})}
                       {viewing.lines.length === 0 && (
@@ -1808,6 +1919,18 @@ export default function InboundPage() {
                                         </td>
                                         <td className="px-2 py-1">{l.unit || ''}</td>
                                         <td className="px-2 py-1 text-right">{l.qty ?? l.quantity ?? ''}</td>
+                                        <td className="px-2 py-1">
+                                          <span className="sm:hidden">
+                                            {(l.memo || l.note || '').toString().trim() ? (
+                                              <button type="button" className="text-emerald-600 underline text-sm flex items-center gap-1" aria-label="Xem ghi chú" onMouseEnter={(e) => showTooltip(e, (l.memo || l.note || '').toString(), 'left')} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, (l.memo || l.note || '').toString(), 'left')} onTouchEnd={handleTouchEnd}>
+                                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                                              </button>
+                                            ) : (
+                                              <span className="text-zinc-700 text-sm">—</span>
+                                            )}
+                                          </span>
+                                          <span className="hidden sm:inline">{l.memo || l.note || ''}</span>
+                                        </td>
                                       </tr>
                                     )})}
                                   </tbody>
