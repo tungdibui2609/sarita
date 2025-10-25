@@ -92,7 +92,7 @@ function LogsSection({ code, slug }: { code?: string; slug?: string }) {
 
   return (
     <div className="mt-6">
-      <h4 className="font-medium mb-2">Lịch sử (phieunhap_log)</h4>
+      <h4 className="font-medium mb-2">Lịch sử thao tác</h4>
       <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 p-3 text-sm">
         {loading && <div className="text-zinc-500">Đang tải lịch sử...</div>}
         {!loading && !logs.length && <div className="text-zinc-500">Không có lịch sử</div>}
