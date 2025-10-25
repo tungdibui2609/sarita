@@ -64,7 +64,7 @@ function computeNextInboundCode(dateStr: string, docs: Doc[]) {
 }
 
 // Small component to fetch and display logs for a given inbound code
-function LogsSection({ code }: { code: string }) {
+function LogsSection({ code, slug }: { code?: string; slug?: string }) {
   const [logs, setLogs] = useState<Array<{ timestamp: string; user: string; action: string; details: string; slug?: string }>>([]);
   const [loading, setLoading] = useState(false);
 
@@ -73,7 +73,8 @@ function LogsSection({ code }: { code: string }) {
     async function load() {
       setLoading(true);
       try {
-        const res = await fetch(`/api/inbound/logs?code=${encodeURIComponent(code)}`);
+        const q = slug ? `slug=${encodeURIComponent(slug)}` : `code=${encodeURIComponent(code ?? "")}`;
+        const res = await fetch(`/api/inbound/logs?${q}`);
         const j = await res.json();
         if (!mounted) return;
         if (j?.ok && Array.isArray(j.logs)) {
@@ -87,7 +88,7 @@ function LogsSection({ code }: { code: string }) {
     }
     load();
     return () => { mounted = false; };
-  }, [code]);
+  }, [code, slug]);
 
   return (
     <div className="mt-6">
@@ -111,7 +112,7 @@ function LogsSection({ code }: { code: string }) {
 }
 
 // Versions UI: fetch available versions and allow previewing a snapshot
-function VersionsSection({ code, onPreview }: { code: string; onPreview: (_snapshot: any, _version?: number) => void }) {
+function VersionsSection({ code, slug, onPreview }: { code?: string; slug?: string; onPreview: (_snapshot: any, _version?: number) => void }) {
   const [versions, setVersions] = useState<Array<{ version: number; timestamp: string; user: string; data: any }>>([]);
   const [loading, setLoading] = useState(false);
 
@@ -120,7 +121,8 @@ function VersionsSection({ code, onPreview }: { code: string; onPreview: (_snaps
     async function load() {
       setLoading(true);
       try {
-        const res = await fetch(`/api/inbound/versions?code=${encodeURIComponent(code)}`);
+        const q = slug ? `slug=${encodeURIComponent(slug)}` : `code=${encodeURIComponent(code ?? "")}`;
+        const res = await fetch(`/api/inbound/versions?${q}`);
         const j = await res.json();
         if (!mounted) return;
     if (j?.ok && Array.isArray(j.versions)) setVersions(j.versions);
@@ -1879,10 +1881,10 @@ export default function InboundPage() {
               {/* Logs then Versions area: stacked vertically for readability */}
               <div className="mt-6 space-y-4">
                 <div>
-                  <LogsSection code={viewing.code} />
+                  <LogsSection code={viewing.code} slug={viewing.slug} />
                 </div>
                 <div>
-                  <VersionsSection code={viewing.code} onPreview={(snap, ver) => {
+                  <VersionsSection code={viewing.code} slug={viewing.slug} onPreview={(snap, ver) => {
                     try { setPreviewSnapshot(snap || null); setPreviewVersion(typeof ver === 'number' ? ver : null); } catch { setPreviewSnapshot(null); setPreviewVersion(null); }
                   }} />
                 </div>
@@ -1940,6 +1942,7 @@ export default function InboundPage() {
                                       <th className="text-left px-2">Sản phẩm</th>
                                       <th className="text-left px-2">ĐVT</th>
                                       <th className="text-right px-2">SL</th>
+                                      <th className="text-right px-2">note</th>
                                     </tr>
                                   </thead>
                                   <tbody>

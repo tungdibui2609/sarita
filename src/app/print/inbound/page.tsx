@@ -282,10 +282,11 @@ function InboundContent() {
           setIsPreviewMode(false);
         }
         if (!previewMode) return;
-        if (!doc?.code) return;
+        if (!doc) return;
+  const q = (doc as any).slug ? `slug=${encodeURIComponent((doc as any).slug)}` : `code=${encodeURIComponent(doc.code || '')}`;
         const [rLogs, rVers] = await Promise.all([
-          fetch(`/api/inbound/logs?code=${encodeURIComponent(doc.code)}`),
-          fetch(`/api/inbound/versions?code=${encodeURIComponent(doc.code)}`),
+          fetch(`/api/inbound/logs?${q}`),
+          fetch(`/api/inbound/versions?${q}`),
         ]);
         const jLogs = await rLogs.json().catch(() => null);
         const jVers = await rVers.json().catch(() => null);
@@ -348,7 +349,8 @@ function InboundContent() {
     if (!doc?.code) { setCurrentVersion(null); return; }
     (async () => {
       try {
-        const res = await fetch(`/api/inbound/versions?code=${encodeURIComponent(doc.code)}`);
+  const q = (doc as any).slug ? `slug=${encodeURIComponent((doc as any).slug)}` : `code=${encodeURIComponent(doc.code)}`;
+  const res = await fetch(`/api/inbound/versions?${q}`);
         const j = await res.json().catch(() => null);
         if (!alive) return;
         if (j && j.ok && Array.isArray(j.versions) && j.versions.length > 0) {
