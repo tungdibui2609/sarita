@@ -38,10 +38,12 @@ function XhdHeader() {
 
 export default function XhdPage() {
   // keep client-only usage and ensure PrintInboundPage rendered below header
+  // Remove the top padding when rendering a snapshot so screenshots don't have extra blank space
+  const isSnapshot = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('snapshot') === '1' : false;
   return (
     <div>
       <XhdHeader />
-      <main className="pt-14 print:pt-0">
+      <main className={isSnapshot ? "print:pt-0" : "pt-14 print:pt-0"}>
         <PrintInboundPage />
       </main>
     </div>
