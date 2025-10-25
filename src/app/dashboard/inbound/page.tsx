@@ -233,7 +233,10 @@ export default function InboundPage() {
   // will be visible until both the fetch resolves (success or error) and the
   // countdown reaches 0. The provided fn should perform the fetch and return
   // the result (e.g. a Blob).
-  async function runConversionFetch<T>(fn: (signal: AbortSignal) => Promise<T>, slug?: string): Promise<T> {
+  // fn: fetcher that accepts AbortSignal and returns a result
+  // slug: optional slug identifier (legacy)
+  // useProgress: if true, poll /api/.../progress for real progress updates. Default false -> no polling (one fetch only).
+  async function runConversionFetch<T>(fn: (signal: AbortSignal) => Promise<T>, slug?: string, useProgress = false): Promise<T> {
     // If a conversion is already visible/running, avoid starting a duplicate
     if (conversionVisible) return Promise.reject(new Error("Conversion already in progress"));
     setConversionVisible(true);
@@ -251,24 +254,37 @@ export default function InboundPage() {
       }
     }, 1000);
 
-  // Poll progress endpoint if slug provided. Poll interval ~1.5s.
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let startTimer: ReturnType<typeof setTimeout> | null = null;
-    if (slug) {
+    // Poll progress endpoint only when explicitly requested (useProgress === true).
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let startTimer: ReturnType<typeof setTimeout> | null = null;
+    if (slug && useProgress) {
       // avoid starting multiple polls for the same slug
       if (!activeProgressPolls.current[slug]) {
         activeProgressPolls.current[slug] = true;
         const poll = async () => {
           try {
+            // debug: log each poll attempt (dev only)
+            if (process.env.NODE_ENV === 'development') {
+              // eslint-disable-next-line no-console
+              console.log(`[progress-poll] polling slug=${slug} at ${new Date().toISOString()}`);
+            }
             const res = await fetch(`/api/inbound/print-image/progress?slug=${encodeURIComponent(slug)}`, { signal: controller.signal });
             // If progress endpoint returns 404, stop polling (server doesn't support it)
             if (res.status === 404) {
+              if (process.env.NODE_ENV === 'development') {
+                // eslint-disable-next-line no-console
+                console.warn(`[progress-poll] slug=${slug} progress endpoint 404 -> stop polling`);
+              }
               if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
               activeProgressPolls.current[slug] = false;
               return;
             }
             if (!res.ok) return;
             const j = await res.json();
+            if (process.env.NODE_ENV === 'development') {
+              // eslint-disable-next-line no-console
+              console.log(`[progress-poll] slug=${slug} -> progress=${j?.progress}`);
+            }
             if (j && typeof j.progress === 'number') {
               setConversionProgress(Math.max(0, Math.min(100, Math.round(j.progress))));
             }
@@ -276,9 +292,13 @@ export default function InboundPage() {
             // ignore polling errors (endpoint may not exist or aborted)
           }
         };
-        // start polling after a short delay to avoid bursts for fast operations
+  // start polling after a short delay to avoid bursts for fast operations
   startTimer = setTimeout(() => { void poll(); }, 500);
   pollTimer = setInterval(poll, 1500);
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log(`[progress-poll] scheduled poll for slug=${slug} startDelay=500 interval=1500`);
+        }
         // ensure startTimer cleaned if we clear pollTimer later
         const origClear = pollTimer;
         // store startTimer id on pollTimer variable scope is not possible; we'll clear startTimer in finally below by tracking it
@@ -320,7 +340,13 @@ export default function InboundPage() {
       if (countdownTimer) clearInterval(countdownTimer);
       if (pollTimer) clearInterval(pollTimer);
       if (startTimer) clearTimeout(startTimer);
-      if (slug) activeProgressPolls.current[slug] = false;
+      if (slug && useProgress) {
+        activeProgressPolls.current[slug] = false;
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log(`[progress-poll] cleared poll for slug=${slug}`);
+        }
+      }
       setConversionVisible(false);
       setConversionCountdown(15);
       setConversionProgress(null);
