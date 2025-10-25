@@ -6,6 +6,15 @@ import { usePathname } from "next/navigation";
 
 function XhdHeader() {
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
+  // Hide this interactive header when rendering for a snapshot (server screenshot)
+  // The screenshot service requests /xhd/:slug?snapshot=1 — in that case we don't render the header
+  // so it won't appear in the exported image.
+  try {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search || '');
+      if (params.get('snapshot') === '1') return null;
+    }
+  } catch {}
   const handlePrint = () => {
     try { window.print(); } catch {}
   };
