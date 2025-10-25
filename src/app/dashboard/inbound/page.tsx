@@ -616,8 +616,10 @@ export default function InboundPage() {
     return docs.filter((d) => {
       const whName = d.warehouse || "";
       const whId = nameToId.get(whName) || "";
+      // build extra searchable text from lines (product and memo)
+      const linesText = (d.lines || []).map(l => `${l.product || ''} ${l.memo || ''}`).join(' ');
       const matchesQ = q
-        ? [d.code, d.createdBy ?? "", d.description ?? "", d.source ?? "", whName, whId]
+        ? [d.code, d.createdBy ?? "", d.description ?? "", d.source ?? "", whName, whId, linesText]
             .some((v) => (v || "").toString().toLowerCase().includes(q))
         : true;
       const matchesWh = warehouse === "Tất cả" ? true : d.warehouse === warehouse;
@@ -956,7 +958,7 @@ export default function InboundPage() {
               <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-zinc-400">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               </span>
-              <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); setSelected([]); }} placeholder="Tìm theo số phiếu" className="w-full pl-9 pr-3 py-2 rounded-lg border border-zinc-200 bg-white/60 text-sm placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100" />
+              <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); setSelected([]); }} placeholder="Tìm theo số phiếu, diễn giải, người lập, ghi chú sản phẩm" className="w-full pl-9 pr-3 py-2 rounded-lg border border-zinc-200 bg-white/60 text-sm placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100" />
             </div>
           </div>
           <select value={warehouse} onChange={(e) => { setWarehouse(e.target.value); setPage(1); setSelected([]); }} className="rounded-lg border border-zinc-200 bg-white/60 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 dark:bg-zinc-800 dark:border-zinc-700 dark:text-zinc-100">
@@ -1038,9 +1040,9 @@ export default function InboundPage() {
                   <input type="checkbox" className="rounded" onChange={toggleSelectAllPage} checked={items.length > 0 && items.every(i => selected.includes(i.id))} aria-label="Chọn tất cả" />
                 </th>
                 <th className="text-left font-medium px-4 py-3">Số phiếu</th>
-                <th className="text-left font-medium px-4 py-3">Ngày</th>
-                <th className="text-left font-medium px-4 py-3">Người lập phiếu</th>
-                <th className="text-left font-medium px-4 py-3">Diễn giải</th>
+                <th className="hidden sm:table-cell text-left font-medium px-4 py-3">Ngày</th>
+                <th className="hidden sm:table-cell text-left font-medium px-4 py-3">Người lập phiếu</th>
+                <th className="hidden sm:table-cell text-left font-medium px-4 py-3">Diễn giải</th>
                 <th className="text-right font-medium px-4 py-3">Hành động</th>
               </tr>
             </thead>
@@ -1060,9 +1062,9 @@ export default function InboundPage() {
                       {d.code}
                     </button>
                   </td>
-                  <td className="px-4 py-3">{_formatDMY(d.date)}</td>
-                  <td className="px-4 py-3">{d.createdBy}</td>
-                  <td className="px-4 py-3">{d.description}</td>
+                  <td className="hidden sm:table-cell px-4 py-3">{_formatDMY(d.date)}</td>
+                  <td className="hidden sm:table-cell px-4 py-3">{d.createdBy}</td>
+                  <td className="hidden sm:table-cell px-4 py-3">{d.description}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
                       <button disabled={imagePreviewLoadingFor === (d.slug || d.code)} onClick={async () => {
@@ -1605,15 +1607,22 @@ export default function InboundPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
-                      {viewing.lines.map((l, idx) => (
+                      {viewing.lines.map((l, idx) => {
+                        const prodStr = (l.product || '').toString();
+                        const codeOnly = prodStr.split(' - ')[0];
+                        return (
                         <tr key={l.id}>
                           <td className="px-3 py-2">{idx + 1}</td>
-                          <td className="px-3 py-2">{l.product}</td>
+                          <td className="px-3 py-2">
+                            {/* On small screens show only product code; on sm+ show full product string */}
+                            <span className="sm:hidden">{codeOnly}</span>
+                            <span className="hidden sm:inline">{prodStr}</span>
+                          </td>
                           <td className="px-3 py-2">{l.unit}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{l.qty}</td>
                           <td className="px-3 py-2">{l.memo || ""}</td>
                         </tr>
-                      ))}
+                      )})}
                       {viewing.lines.length === 0 && (
                         <tr>
                           <td colSpan={5} className="px-3 py-6 text-center text-zinc-500">Không có dòng hàng hóa</td>
@@ -1709,14 +1718,20 @@ export default function InboundPage() {
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {((pdoc.lines || []) as any[]).map((l: any, i: number) => (
+                                    {((pdoc.lines || []) as any[]).map((l: any, i: number) => {
+                                      const prodStr = (l.product || l.productName || `${l.productCode || ''} - ${l.productName || ''}`).toString();
+                                      const codeOnly = prodStr.split(' - ')[0];
+                                      return (
                                       <tr key={i} className="border-t">
                                         <td className="px-2 py-1">{i+1}</td>
-                                        <td className="px-2 py-1">{(l.product || l.productName || `${l.productCode || ''} - ${l.productName || ''}`).toString()}</td>
+                                        <td className="px-2 py-1">
+                                          <span className="sm:hidden">{codeOnly}</span>
+                                          <span className="hidden sm:inline">{prodStr}</span>
+                                        </td>
                                         <td className="px-2 py-1">{l.unit || ''}</td>
                                         <td className="px-2 py-1 text-right">{l.qty ?? l.quantity ?? ''}</td>
                                       </tr>
-                                    ))}
+                                    )})}
                                   </tbody>
                                 </table>
                               </div>
