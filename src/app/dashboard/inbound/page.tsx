@@ -229,6 +229,69 @@ export default function InboundPage() {
   // Track which slug(s) currently have an active poll to avoid duplicate polling
   const activeProgressPolls = useRef<Record<string, boolean>>({});
 
+  // Tooltip for viewing modal (small, localized; supports hover + long-press on mobile)
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const [tooltipInfo, setTooltipInfo] = useState<{ text: string; left: number; top: number } | null>(null);
+  const touchTimer = useRef<number | null>(null);
+
+  function showTooltipAt(target: HTMLElement, text: string) {
+    if (!modalRef.current) {
+      setTooltipInfo(null);
+      return;
+    }
+    try {
+      const modalRect = modalRef.current.getBoundingClientRect();
+      const rect = target.getBoundingClientRect();
+      const left = rect.left - modalRect.left + rect.width / 2;
+      const top = rect.top - modalRect.top;
+      setTooltipInfo({ text, left, top });
+    } catch {
+      setTooltipInfo(null);
+    }
+  }
+
+  function showTooltip(e: any, text: string) {
+    try {
+      const tgt = (e.currentTarget ?? e.target) as HTMLElement;
+      if (tgt) showTooltipAt(tgt, text);
+    } catch { /* ignore */ }
+  }
+
+  function hideTooltip() {
+    setTooltipInfo(null);
+    if (touchTimer.current) {
+      window.clearTimeout(touchTimer.current);
+      touchTimer.current = null;
+    }
+  }
+
+  function handleTouchStart(e: any, text: string) {
+    if (touchTimer.current) window.clearTimeout(touchTimer.current);
+    const tgt = (e.currentTarget ?? e.target) as HTMLElement;
+    // long-press threshold ~500ms
+    touchTimer.current = window.setTimeout(() => {
+      if (tgt) showTooltipAt(tgt, text);
+      touchTimer.current = null;
+    }, 500) as unknown as number;
+  }
+
+  function handleTouchEnd() {
+    if (touchTimer.current) {
+      window.clearTimeout(touchTimer.current);
+      touchTimer.current = null;
+    }
+    // keep tooltip visible briefly after touchend
+    if (tooltipInfo) {
+      window.setTimeout(() => setTooltipInfo(null), 2200);
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (touchTimer.current) window.clearTimeout(touchTimer.current);
+    };
+  }, []);
+
   // Run a fetch while showing a minimum conversion countdown (15s). The overlay
   // will be visible until both the fetch resolves (success or error) and the
   // countdown reaches 0. The provided fn should perform the fetch and return
@@ -1552,7 +1615,7 @@ export default function InboundPage() {
       {viewing && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto">
           <div className="absolute inset-0 bg-black/40" onClick={() => setViewing(null)} />
-          <div className="relative w-full max-w-3xl mx-4 my-8 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white dark:bg-zinc-900 p-5 md:p-6 shadow-xl max-h-[85vh] overflow-y-auto">
+          <div ref={modalRef} className="relative w-full max-w-3xl mx-4 my-8 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white dark:bg-zinc-900 p-5 md:p-6 shadow-xl max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Phiếu nhập • {viewing.code}</h3>
               <button onClick={() => setViewing(null)} className="text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">×</button>
@@ -1592,6 +1655,13 @@ export default function InboundPage() {
               </div>
             </div>
 
+            {/* Tooltip rendered relative to modal (hover on desktop, long-press on mobile) */}
+            {tooltipInfo && (
+              <div className="absolute z-60 px-3 py-1 rounded bg-black text-white text-sm pointer-events-none" style={{ left: `${tooltipInfo.left}px`, top: `${tooltipInfo.top - 8}px`, transform: 'translateX(-50%) translateY(-100%)' }}>
+                {tooltipInfo.text}
+              </div>
+            )}
+
             <div className="mt-5">
               <h4 className="font-medium mb-2">Chi tiết hàng hóa</h4>
               <div className="rounded-xl border border-zinc-200/70 dark:border-zinc-800/70 overflow-hidden">
@@ -1614,9 +1684,13 @@ export default function InboundPage() {
                         <tr key={l.id}>
                           <td className="px-3 py-2">{idx + 1}</td>
                           <td className="px-3 py-2">
-                            {/* On small screens show only product code; on sm+ show full product string */}
-                            <span className="sm:hidden">{codeOnly}</span>
-                            <span className="hidden sm:inline">{prodStr}</span>
+                            {/* On small screens show only product code; on sm+ show full product string. */}
+                            <span className="sm:hidden">
+                              <span className="cursor-help" onMouseEnter={(e) => showTooltip(e, prodStr)} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, prodStr)} onTouchEnd={handleTouchEnd}>{codeOnly}</span>
+                            </span>
+                            <span className="hidden sm:inline">
+                              <span className="cursor-help" onMouseEnter={(e) => showTooltip(e, prodStr)} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, prodStr)} onTouchEnd={handleTouchEnd}>{prodStr}</span>
+                            </span>
                           </td>
                           <td className="px-3 py-2">{l.unit}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{l.qty}</td>
@@ -1725,8 +1799,12 @@ export default function InboundPage() {
                                       <tr key={i} className="border-t">
                                         <td className="px-2 py-1">{i+1}</td>
                                         <td className="px-2 py-1">
-                                          <span className="sm:hidden">{codeOnly}</span>
-                                          <span className="hidden sm:inline">{prodStr}</span>
+                                          <span className="sm:hidden">
+                                            <span className="cursor-help" onMouseEnter={(e) => showTooltip(e, prodStr)} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, prodStr)} onTouchEnd={handleTouchEnd}>{codeOnly}</span>
+                                          </span>
+                                          <span className="hidden sm:inline">
+                                            <span className="cursor-help" onMouseEnter={(e) => showTooltip(e, prodStr)} onMouseLeave={hideTooltip} onTouchStart={(e) => handleTouchStart(e, prodStr)} onTouchEnd={handleTouchEnd}>{prodStr}</span>
+                                          </span>
                                         </td>
                                         <td className="px-2 py-1">{l.unit || ''}</td>
                                         <td className="px-2 py-1 text-right">{l.qty ?? l.quantity ?? ''}</td>
