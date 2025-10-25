@@ -217,6 +217,116 @@ export default function InboundPage() {
   const [saving, setSaving] = useState(false);
   const [selected, setSelected] = useState<number[]>([]);
   const [downloading, setDownloading] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  // track which slug/code is currently loading so only that row shows loading state
+  const [imagePreviewLoadingFor, setImagePreviewLoadingFor] = useState<string | null>(null);
+  const [imagePreviewError, setImagePreviewError] = useState<string | null>(null);
+  // Conversion overlay & countdown (shown when server converts file to image)
+  const [conversionVisible, setConversionVisible] = useState(false);
+  const [conversionCountdown, setConversionCountdown] = useState(15);
+  const [conversionProgress, setConversionProgress] = useState<number | null>(null);
+  const [conversionAbortController, setConversionAbortController] = useState<AbortController | null>(null);
+  // Track which slug(s) currently have an active poll to avoid duplicate polling
+  const activeProgressPolls = useRef<Record<string, boolean>>({});
+
+  // Run a fetch while showing a minimum conversion countdown (15s). The overlay
+  // will be visible until both the fetch resolves (success or error) and the
+  // countdown reaches 0. The provided fn should perform the fetch and return
+  // the result (e.g. a Blob).
+  async function runConversionFetch<T>(fn: (signal: AbortSignal) => Promise<T>, slug?: string): Promise<T> {
+    // If a conversion is already visible/running, avoid starting a duplicate
+    if (conversionVisible) return Promise.reject(new Error("Conversion already in progress"));
+    setConversionVisible(true);
+    setConversionCountdown(15);
+    setConversionProgress(null);
+  const controller = new AbortController();
+  setConversionAbortController(controller);
+    let localCount = 15;
+    let countdownTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+      localCount -= 1;
+      setConversionCountdown(localCount);
+      if (localCount <= 0 && countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+    }, 1000);
+
+  // Poll progress endpoint if slug provided. Poll interval ~1.5s.
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let startTimer: ReturnType<typeof setTimeout> | null = null;
+    if (slug) {
+      // avoid starting multiple polls for the same slug
+      if (!activeProgressPolls.current[slug]) {
+        activeProgressPolls.current[slug] = true;
+        const poll = async () => {
+          try {
+            const res = await fetch(`/api/inbound/print-image/progress?slug=${encodeURIComponent(slug)}`, { signal: controller.signal });
+            // If progress endpoint returns 404, stop polling (server doesn't support it)
+            if (res.status === 404) {
+              if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+              activeProgressPolls.current[slug] = false;
+              return;
+            }
+            if (!res.ok) return;
+            const j = await res.json();
+            if (j && typeof j.progress === 'number') {
+              setConversionProgress(Math.max(0, Math.min(100, Math.round(j.progress))));
+            }
+          } catch (e) {
+            // ignore polling errors (endpoint may not exist or aborted)
+          }
+        };
+        // start polling after a short delay to avoid bursts for fast operations
+  startTimer = setTimeout(() => { void poll(); }, 500);
+  pollTimer = setInterval(poll, 1500);
+        // ensure startTimer cleaned if we clear pollTimer later
+        const origClear = pollTimer;
+        // store startTimer id on pollTimer variable scope is not possible; we'll clear startTimer in finally below by tracking it
+        // (we'll capture startTimer in closure and clear it in the finally block)
+        // attach to pollTimer via a noop to keep linter happy
+        void origClear;
+      }
+    }
+
+    try {
+      const result = await fn(controller.signal);
+      // If we have a progress value, wait until progress reaches 100 OR countdown ends
+      if (conversionProgress != null) {
+        await new Promise<void>((resolve) => {
+          const check = setInterval(() => {
+            if (conversionProgress != null && conversionProgress >= 100) {
+              clearInterval(check);
+              resolve();
+            }
+            if (localCount <= 0) {
+              clearInterval(check);
+              resolve();
+            }
+          }, 250);
+        });
+      } else if (localCount > 0) {
+        // Wait until countdown finished as well
+        await new Promise((resolve) => {
+          const check = setInterval(() => {
+            if (localCount <= 0) {
+              clearInterval(check);
+              resolve(null);
+            }
+          }, 150);
+        });
+      }
+      return result;
+    } finally {
+      if (countdownTimer) clearInterval(countdownTimer);
+      if (pollTimer) clearInterval(pollTimer);
+      if (startTimer) clearTimeout(startTimer);
+      if (slug) activeProgressPolls.current[slug] = false;
+      setConversionVisible(false);
+      setConversionCountdown(15);
+      setConversionProgress(null);
+      setConversionAbortController(null);
+    }
+  }
   // image modal and download UI removed per request
   const [productMap, setProductMap] = useState<Map<string, any>>(new Map());
   const [products, setProducts] = useState<SimpleProduct[]>([]);
@@ -768,7 +878,7 @@ export default function InboundPage() {
     const d = docs.find(x => x.id === selected[0]);
     if (!d) { alert("Không tìm thấy phiếu đã chọn"); return; }
     try {
-  const slugOrCode = d.slug || d.code;
+          const slugOrCode = d.slug || d.code; 
   const url = `/xhd/${encodeURIComponent(slugOrCode)}`;
       window.open(url, "_blank");
     } catch (e: any) {
@@ -793,7 +903,8 @@ export default function InboundPage() {
     const dd = String(d.getDate()).padStart(2, "0");
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     const yy = d.getFullYear();
-    return `${dd}/${mm}/${yy}`;
+    // Return with dashes as requested: dd-mm-yyyy
+    return `${dd}-${mm}-${yy}`;
   }
   function _formatDateLine(dateStr: string) {
     const d = new Date(dateStr);
@@ -844,23 +955,25 @@ export default function InboundPage() {
               try {
                 setDownloading(true);
                 const slugOrCode = d.slug || d.code;
-                const res = await fetch(`/api/inbound/print-image?slug=${encodeURIComponent(slugOrCode)}`);
-                const ct = res.headers.get('content-type') || '';
-                if (!res.ok) {
-                  // try parse json error
-                  let txt = await res.text();
-                  try { const j = JSON.parse(txt); txt = j?.error || JSON.stringify(j); } catch {}
-                  throw new Error(`Server lỗi: ${res.status} ${txt}`);
-                }
-                if (ct.includes('application/json')) {
-                  const j = await res.json();
-                  throw new Error(j?.error || 'Không nhận được ảnh (json returned)');
-                }
-                if (!ct.includes('image')) {
-                  const txt = await res.text();
-                  throw new Error('Không phải ảnh trả về: ' + txt.slice(0, 200));
-                }
-                const blob = await res.blob();
+                // show conversion countdown and perform fetch in parallel
+                const blob = await runConversionFetch(async (signal) => {
+                  const res = await fetch(`/api/inbound/print-image?slug=${encodeURIComponent(slugOrCode)}`, { signal });
+                  const ct = res.headers.get('content-type') || '';
+                  if (!res.ok) {
+                    let txt = await res.text();
+                    try { const j = JSON.parse(txt); txt = j?.error || JSON.stringify(j); } catch {}
+                    throw new Error(`Server lỗi: ${res.status} ${txt}`);
+                  }
+                  if (ct.includes('application/json')) {
+                    const j = await res.json();
+                    throw new Error(j?.error || 'Không nhận được ảnh (json returned)');
+                  }
+                  if (!ct.includes('image')) {
+                    const txt = await res.text();
+                    throw new Error('Không phải ảnh trả về: ' + txt.slice(0, 200));
+                  }
+                  return await res.blob();
+                }, slugOrCode);
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -921,13 +1034,54 @@ export default function InboundPage() {
                       {d.code}
                     </button>
                   </td>
-                  <td className="px-4 py-3">{d.date}</td>
+                  <td className="px-4 py-3">{_formatDMY(d.date)}</td>
                   <td className="px-4 py-3">{d.createdBy}</td>
                   <td className="px-4 py-3">{d.description}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="inline-flex items-center gap-2">
-                      <button onClick={() => onEdit(d)} className="px-2 py-1 rounded-md text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-900/20">Sửa</button>
-                      <button onClick={() => onDelete(d)} className="px-2 py-1 rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20">Xóa</button>
+                      <button disabled={imagePreviewLoadingFor === (d.slug || d.code)} onClick={async () => {
+                        const slugOrCode = d.slug || d.code;
+                        try {
+                          setImagePreviewError(null);
+                          setImagePreviewLoadingFor(slugOrCode);
+                          const blob = await runConversionFetch(async (signal) => {
+                            const res = await fetch(`/api/inbound/print-image?slug=${encodeURIComponent(slugOrCode)}`, { signal });
+                            if (!res.ok) {
+                              let txt = await res.text();
+                              try { const j = JSON.parse(txt); txt = j?.error || JSON.stringify(j); } catch {}
+                              throw new Error(`Server lỗi: ${res.status} ${txt}`);
+                            }
+                            const ct = res.headers.get('content-type') || '';
+                            if (!ct.includes('image')) {
+                              const txt = await res.text();
+                              throw new Error('Không phải ảnh trả về: ' + txt.slice(0, 200));
+                            }
+                            return await res.blob();
+                          }, slugOrCode);
+                          const url = URL.createObjectURL(blob);
+                          // revoke previous if any
+                          if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+                          setImagePreviewUrl(url);
+                        } catch (e: any) {
+                          setImagePreviewError(e?.message || String(e));
+                        } finally {
+                          setImagePreviewLoadingFor(null);
+                        }
+                      }} aria-label="Xem ảnh" title="Xem ảnh" className="px-2 py-1 rounded-md border border-zinc-200 hover:bg-zinc-50 text-sm dark:border-zinc-700 dark:hover:bg-zinc-800 disabled:opacity-50">
+                        {imagePreviewLoadingFor === (d.slug || d.code) ? (
+                          <svg className="animate-spin text-emerald-600" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="10" strokeOpacity="0.2" /><path d="M22 12a10 10 0 0 1-10 10" /></svg>
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="3"/></svg>
+                        )}
+                        <span className="sr-only">Xem ảnh</span>
+                      </button>
+                      {/* Edit button (middle) */}
+                      <button aria-label="Sửa phiếu" title="Sửa" onClick={() => onEdit(d)} className="p-2 rounded-md hover:bg-zinc-50 dark:hover:bg-zinc-800">
+                        <svg className="w-4 h-4 text-emerald-700 dark:text-emerald-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                      </button>
+                      <button aria-label="Xóa phiếu" title="Xóa" onClick={() => onDelete(d)} className="p-2 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20">
+                        <svg className="w-4 h-4 text-red-700 dark:text-red-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -957,6 +1111,58 @@ export default function InboundPage() {
           <div className="relative z-50 pointer-events-auto bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-6 py-4 shadow-xl flex items-center gap-3">
             <svg className="animate-spin text-emerald-600" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity="0.2" /><path d="M22 12a10 10 0 0 1-10 10" /></svg>
             <div className="text-sm font-medium">Đang tải tệp, vui lòng chờ…</div>
+          </div>
+        </div>
+      )}
+      {/* Image preview modal */}
+      {imagePreviewUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto">
+          <div className="absolute inset-0 bg-black/40" onClick={() => {
+            try { if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); } catch {};
+            setImagePreviewUrl(null); setImagePreviewError(null);
+          }} />
+          <div className="relative w-full max-w-3xl mx-4 my-8 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white dark:bg-zinc-900 p-4 shadow-xl">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-medium">Xem ảnh</h3>
+              <button onClick={() => { try { if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl); } catch {} setImagePreviewUrl(null); setImagePreviewError(null); }} className="text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">×</button>
+            </div>
+            <div className="text-sm text-zinc-500 mb-3">Hình ảnh chụp phiếu (nếu mất hoặc lỗi, thử tải lại)</div>
+            <div className="flex items-center justify-center">
+              <img src={imagePreviewUrl} alt="Phiếu" className="max-h-[70vh] w-auto object-contain" />
+            </div>
+            {imagePreviewError && <div className="mt-2 text-sm text-red-600">Lỗi: {imagePreviewError}</div>}
+            <div className="mt-4 text-right">
+              <a href={imagePreviewUrl || '#'} download className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-sm hover:bg-zinc-50 dark:border-zinc-700">Tải xuống</a>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Conversion overlay with 15s countdown */}
+      {conversionVisible && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" />
+          <div className="relative z-50 w-full max-w-lg mx-4 rounded-xl bg-white dark:bg-zinc-900 p-6 border border-zinc-200 dark:border-zinc-800 shadow-xl text-center">
+            <div className="flex items-center justify-center mb-3">
+              <svg className="animate-spin w-6 h-6 text-emerald-600 mr-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" strokeOpacity="0.2" /><path d="M22 12a10 10 0 0 1-10 10" /></svg>
+              <h3 className="text-lg font-medium">Đang chuyển đổi tệp thành hình ảnh</h3>
+            </div>
+            <div className="text-sm text-zinc-600 dark:text-zinc-300">Vui lòng chờ — tiến trình chuyển đổi đang diễn ra</div>
+            <div className="mt-3">
+              {conversionProgress != null ? (
+                <div className="w-full">
+                  <div className="w-full bg-zinc-100 dark:bg-zinc-800 rounded-full h-3 overflow-hidden">
+                    <div className="bg-emerald-500 h-3" style={{ width: `${conversionProgress}%` }} />
+                  </div>
+                  <div className="mt-2 text-sm">Tiến trình: {conversionProgress}%</div>
+                </div>
+              ) : (
+                <div className="text-2xl font-mono">{conversionCountdown}s</div>
+              )}
+            </div>
+            <div className="mt-4 text-sm text-zinc-500">(Hệ thống sẽ tự động tiếp tục khi hoàn tất)</div>
+            <div className="mt-4">
+              <button onClick={() => { try { conversionAbortController?.abort(); } catch {} setConversionVisible(false); setConversionProgress(null); }} className="px-3 py-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-sm">Bỏ chờ</button>
+            </div>
           </div>
         </div>
       )}
@@ -1330,7 +1536,7 @@ export default function InboundPage() {
               </div>
               <div>
                 <div className="text-sm text-zinc-500">Ngày</div>
-                <div className="font-medium">{viewing.date}</div>
+                <div className="font-medium">{_formatDMY(viewing.date)}</div>
               </div>
               <div>
                 <div className="text-sm text-zinc-500">Giờ</div>
