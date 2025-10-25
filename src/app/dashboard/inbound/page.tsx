@@ -746,6 +746,22 @@ export default function InboundPage() {
     }
     return out;
   }
+  function getUnitsForLine(line: Line) {
+    // try to resolve product code
+    const code = (line.code || (line.product || "").toString().split(" - ")[0] || "").toString().trim();
+    if (code) {
+      const prod = productMap.get(code);
+      if (prod) {
+        const arr = [prod.uomSmall || "", prod.uomMedium || "", prod.uomLarge || ""].map(s => (s||"").toString().trim()).filter(Boolean);
+        // unique preserving order
+        const uniq: string[] = [];
+        for (const a of arr) if (!uniq.includes(a)) uniq.push(a);
+        if (uniq.length) return uniq;
+      }
+    }
+    // fallback to global uoms list
+    return uoms.slice();
+  }
   function qtyToKg(line: Line): number | null {
     const code = (line.code || (line.product || "").split(" - ")[0]).trim();
     if (!code) return null;
@@ -1546,7 +1562,7 @@ export default function InboundPage() {
                             className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
                           >
                             <option value="">— Chọn đơn vị —</option>
-                            {uoms.map((u) => (<option key={u} value={u}>{u}</option>))}
+                            {getUnitsForLine(l).map((u) => (<option key={u} value={u}>{u}</option>))}
                           </select>
                         </div>
                         <div>
@@ -1575,11 +1591,11 @@ export default function InboundPage() {
                   <table className="min-w-full text-sm">
                     <thead className="bg-zinc-50/70 dark:bg-zinc-800/50 text-zinc-500">
                       <tr>
-                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">SP</th>
-                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">ĐVT</th>
-                        <th className="text-right font-medium px-3 py-2 whitespace-nowrap">SL</th>
-                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">note</th>
-                        <th className="text-right font-medium px-3 py-2">Hành động</th>
+                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">Sản Phẩm</th>
+                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">Đơn Vị Tính</th>
+                        <th className="text-right font-medium px-3 py-2 whitespace-nowrap">Số Lượng</th>
+                        <th className="text-left font-medium px-3 py-2 whitespace-nowrap">Ghi Chú</th>
+                        
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/70">
@@ -1686,7 +1702,7 @@ export default function InboundPage() {
                               className="w-full px-2 py-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800"
                             >
                               <option value="">— Chọn đơn vị —</option>
-                              {uoms.map((u) => (<option key={u} value={u}>{u}</option>))}
+                              {getUnitsForLine(l).map((u) => (<option key={u} value={u}>{u}</option>))}
                             </select>
                           </td>
                           <td className="px-3 py-2 text-right">
