@@ -544,9 +544,9 @@ function InboundContent() {
                 <div className="min-w-0">
                   <div className="flex flex-col gap-2">
                     <div className="w-full truncate">- Họ và tên người giao: <span className="font-medium">{resolvePlaceholders("{{TEXT1}}")}</span></div>
-                    <div className="w-full flex items-center gap-2 sm:max-w-[45%]">
+                    <div className="w-full flex items-center gap-1 sm:max-w-[45%]">
                       <span className="whitespace-nowrap">- Địa chỉ (bộ phận):</span>
-                      <span className="min-w-0 flex-1 truncate text-left">{resolvePlaceholders("{{TEXT2}}")}</span>
+                      <span className="min-w-0 flex-1 truncate text-left">{(resolvePlaceholders("{{TEXT2}}") || "").toString().trim()}</span>
                     </div>
                   </div>
                   <div className="mt-1 text-[14px] text-zinc-640 truncate">{resolvePlaceholders("{{TEXT5}}")}</div>
@@ -558,8 +558,8 @@ function InboundContent() {
                     {qrDataUrl ? <div id="print-ready" className="hidden" aria-hidden="true"></div> : null}
           <div className={"flex flex-col justify-between items-start text-[14px] font-normal mt-1 " + (isSnapshot ? '[font-family:Roboto,Arial,sans-serif]' : '[font-family:Times_New_Roman,Times,serif]') }>
             <div className="w-full">- Nhập tại kho: {doc.warehouse}</div>
-            <div className="w-full mt-1">
-              <div className="flex items-center gap-2">
+              <div className="w-full mt-1">
+              <div className="flex items-center gap-1">
                 <span className="whitespace-nowrap text-left">- Địa chỉ (bộ phận):</span>
                 <span className="min-w-0 flex-1 truncate text-left">{resolvePlaceholders("{{TEXT6}}")}</span>
               </div>

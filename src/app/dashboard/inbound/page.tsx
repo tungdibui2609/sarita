@@ -1730,8 +1730,17 @@ export default function InboundPage() {
           <div ref={modalRef} className="relative w-full max-w-3xl mx-4 my-8 rounded-2xl border border-zinc-200/70 dark:border-zinc-800/70 bg-white dark:bg-zinc-900 p-5 md:p-6 shadow-xl max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Phiếu nhập • {viewing.code}</h3>
-              <button onClick={() => setViewing(null)} className="text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">×</button>
+              {/* Desktop/tablet close button (small) */}
+              <button onClick={() => setViewing(null)} className="hidden md:inline text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">×</button>
             </div>
+            {/* Mobile floating close button: larger and fixed so it stays visible while scrolling */}
+            <button
+              onClick={() => setViewing(null)}
+              aria-label="Đóng"
+              className="md:hidden fixed top-4 right-3 z-60 w-10 h-10 flex items-center justify-center rounded-full bg-white/90 dark:bg-zinc-900/90 text-zinc-800 dark:text-zinc-100 shadow-md border border-zinc-200 dark:border-zinc-800"
+            >
+              <span className="text-xl leading-none">×</span>
+            </button>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
                 <div className="text-sm text-zinc-500">Số phiếu</div>
