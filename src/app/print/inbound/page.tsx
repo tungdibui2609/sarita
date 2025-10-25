@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import Head from "next/head";
 
 type Line = { product: string; code?: string; unit: string; qty: number; memo?: string; kg?: number | null };
-type Doc = { code: string; date: string; time?: string; warehouse: string; createdBy?: string; receiver?: string; description?: string; lines: Line[] };
+type Doc = { code: string; slug?: string; date: string; time?: string; warehouse: string; createdBy?: string; receiver?: string; description?: string; lines: Line[] };
 
 function _formatDateLineVN(dateStr: string): string {
   if (!dateStr) return "";
